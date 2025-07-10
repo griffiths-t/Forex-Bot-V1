@@ -5,7 +5,7 @@ import config
 import model
 import broker
 import trade_logger
-from utils import is_market_open
+from utils import is_market_open, format_gbp
 
 # Setup bot
 bot = telegram.Bot(token=config.TELEGRAM_TOKEN)
@@ -23,16 +23,34 @@ last_retrain_time = None
 def start(update, context):
     context.bot.send_message(chat_id=update.effective_chat.id, text="👋 Bot is online and ready to trade!")
 
-def summary(update, context):
+def status(update, context):
     try:
-        summary_msg = f"📊 Bot Status:\n"
-        summary_msg += f"• Status: {'⏸️ Paused' if config.TRADING_PAUSED else '▶️ Active'}\n"
-        summary_msg += f"• Market Open: {'✅ Yes' if is_market_open() else '❌ No'}\n"
-        summary_msg += f"• Open Trades: {len(broker.get_open_trades())}\n"
-        summary_msg += f"• Trade Value: {config.TRADING_UNITS:.2f} units\n"
-        summary_msg += f"• Last Retrain: {last_retrain_time if last_retrain_time else 'Never'}\n"
-        summary_msg += f"\n🧠 Last Prediction:\n{last_prediction}"
-        context.bot.send_message(chat_id=update.effective_chat.id, text=summary_msg)
+        open_trades = broker.get_open_trades()
+        num_trades = len(open_trades)
+
+        # Estimate total value of open trades in GBP using live price
+        candles = broker.get_candles(config.TRADING_INSTRUMENT, count=1)
+        current_price = float(candles[-1]["mid"]["c"])
+        trade_value_gbp = config.TRADING_UNITS * current_price * num_trades
+        formatted_value = format_gbp(trade_value_gbp)
+
+        summary_msg = f"📊 *Bot Status*\n"
+        summary_msg += f"• 🔄 Status: {'⏸️ Paused' if config.TRADING_PAUSED else '▶️ Active'}\n"
+        summary_msg += f"• 🕒 Market Open: {'✅ Yes' if is_market_open() else '❌ No'}\n"
+        summary_msg += f"• 📈 Open Trades: {num_trades}\n"
+        summary_msg += f"• 💷 Trade Value: {formatted_value} GBP\n"
+        summary_msg += f"• 🧠 Last Retrain: `{last_retrain_time if last_retrain_time else 'Never'}`\n\n"
+
+        if last_prediction["direction"] is not None:
+            direction = "🟢 Buy" if last_prediction["direction"] == 1 else "🔴 Sell"
+            confidence = f"{last_prediction['confidence']:.2f}"
+            summary_msg += f"🤖 *Last Prediction*\n"
+            summary_msg += f"• Direction: {direction}\n"
+            summary_msg += f"• Confidence: {confidence}\n"
+        else:
+            summary_msg += f"🤖 *Last Prediction*: _None yet._"
+
+        context.bot.send_message(chat_id=update.effective_chat.id, text=summary_msg, parse_mode=telegram.ParseMode.MARKDOWN)
     except Exception as e:
         context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Error: {e}")
 
@@ -71,5 +89,5 @@ def handle_webhook(update_data):
 
 # Register commands
 dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("summary", summary))
+dispatcher.add_handler(CommandHandler("status", status))  # ✅ Renamed from summary
 dispatcher.add_handler(CommandHandler("retrain", retrain_command))
