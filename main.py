@@ -105,7 +105,8 @@ def predict_and_trade():
             broker.close_position(config.TRADING_INSTRUMENT)
 
         print(f"[BOT] Placing new trade: {'Buy' if direction == 1 else 'Sell'}")
-        broker.open_trade(config.TRADING_INSTRUMENT, direction * config.TRADING_UNITS)
+        units = config.TRADING_UNITS if direction == 1 else -config.TRADING_UNITS
+        broker.open_trade(config.TRADING_INSTRUMENT, units)
 
         trade_logger.log_trade({
             "timestamp": datetime.utcnow().isoformat(),
