@@ -1,6 +1,8 @@
 # trade_logger.py
 import csv
 import os
+import broker
+from utils import format_gbp
 
 TRADE_LOG_FILE = "trade_log.csv"
 SKIPPED_TRADE_LOG_FILE = "skipped_trades.csv"
@@ -20,3 +22,29 @@ def log_skipped_trade(skipped_data):
         if not file_exists:
             writer.writeheader()
         writer.writerow(skipped_data)
+
+def get_trade_summary():
+    transactions = broker.get_transaction_history(limit=100)
+
+    total_trades = len(transactions)
+    total_pl = 0.0
+    wins = 0
+    losses = 0
+
+    for txn in transactions:
+        pl = float(txn.get("pl", 0))
+        total_pl += pl
+        if pl > 0:
+            wins += 1
+        elif pl < 0:
+            losses += 1
+
+    win_rate = (wins / total_trades) * 100 if total_trades else 0
+
+    return {
+        "total_trades": total_trades,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": win_rate,
+        "total_pl": total_pl
+    }
