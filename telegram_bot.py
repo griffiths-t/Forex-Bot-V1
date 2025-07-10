@@ -1,6 +1,7 @@
 import telegram
 from telegram.ext import Updater, CommandHandler, Dispatcher
 from datetime import datetime
+
 import config
 import model
 import broker
@@ -28,7 +29,7 @@ def status(update, context):
         open_trades = broker.get_open_trades()
         num_trades = len(open_trades)
 
-        # Estimate total value of open trades in GBP using live price
+        # Estimate value using live price
         candles = broker.get_candles(config.TRADING_INSTRUMENT, count=1)
         current_price = float(candles[-1]["mid"]["c"])
         trade_value_gbp = config.TRADING_UNITS * current_price * num_trades
@@ -63,6 +64,21 @@ def retrain_command(update, context):
     except Exception as e:
         context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Retrain failed: {e}")
 
+def stats(update, context):
+    try:
+        stats = trade_logger.get_trade_summary()
+        msg = (
+            f"📊 *Trade Performance Stats*\n"
+            f"• 📈 Total Trades: {stats['total_trades']}\n"
+            f"• ✅ Wins: {stats['wins']}\n"
+            f"• ❌ Losses: {stats['losses']}\n"
+            f"• 🔥 Win Rate: {stats['win_rate']:.1f}%\n"
+            f"• 💰 Net P/L: {format_gbp(stats['total_pl'])}"
+        )
+        context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode=telegram.ParseMode.MARKDOWN)
+    except Exception as e:
+        context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Error: {e}")
+
 def send_text(message):
     bot.send_message(chat_id=config.TELEGRAM_CHAT_ID, text=message)
 
@@ -89,5 +105,6 @@ def handle_webhook(update_data):
 
 # Register commands
 dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("status", status))  # ✅ Renamed from summary
+dispatcher.add_handler(CommandHandler("status", status))
 dispatcher.add_handler(CommandHandler("retrain", retrain_command))
+dispatcher.add_handler(CommandHandler("stats", stats))
