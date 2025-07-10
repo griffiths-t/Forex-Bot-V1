@@ -27,3 +27,7 @@ def log_scheduler_message(message):
     else:
         with open(SCHEDULER_LOG_PATH, "a") as f:
             f.write(f"{timestamp} - {message}\n")
+
+def format_gbp(amount):
+    """Format a float as British Pound currency (e.g., £1,234.56)"""
+    return f"£{amount:,.2f}"
