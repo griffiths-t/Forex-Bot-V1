@@ -24,15 +24,15 @@ def log_skipped_trade(skipped_data):
         writer.writerow(skipped_data)
 
 def get_trade_summary():
-    transactions = broker.get_transaction_history(limit=100)
+    trades = broker.get_closed_trades()
 
-    total_trades = len(transactions)
+    total_trades = len(trades)
     total_pl = 0.0
     wins = 0
     losses = 0
 
-    for txn in transactions:
-        pl = float(txn.get("pl", 0))
+    for trade in trades:
+        pl = float(trade.get("realizedPL", 0))
         total_pl += pl
         if pl > 0:
             wins += 1
