@@ -81,3 +81,14 @@ def close_position(instrument):
     if response.status_code != 200:
         raise Exception(f"Failed to close position: {response.status_code} - {response.text}")
     return response.json()
+
+def get_transaction_history(limit=100):
+    url = f"{config.OANDA_URL}/accounts/{config.OANDA_ACCOUNT_ID}/transactions"
+    params = {
+        "type": "ORDER_FILL",
+        "count": limit
+    }
+    response = requests.get(url, headers=get_headers(), params=params)
+    if response.status_code != 200:
+        raise Exception(f"Error fetching transactions: {response.status_code} - {response.text}")
+    return response.json().get("transactions", [])
