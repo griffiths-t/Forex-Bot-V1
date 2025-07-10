@@ -28,23 +28,27 @@ def keep_alive():
 
 def predict_and_trade():
     if config.TRADING_PAUSED:
-        print("[BOT] Trading is paused.")
+        reason = "⏸️ Bot paused"
+        print(f"[BOT] {reason}")
+        telegram_bot.send_text(f"📭 Trade skipped: {reason}")
         trade_logger.log_skipped_trade({
             "timestamp": datetime.utcnow().isoformat(),
             "direction": None,
             "confidence": None,
-            "reason_skipped": "Bot paused",
+            "reason_skipped": reason,
             "indicators": {}
         })
         return
 
     if not is_market_open():
-        print("[BOT] Market is closed. Skipping trade.")
+        reason = "❌ Market closed"
+        print(f"[BOT] {reason}")
+        telegram_bot.send_text(f"📭 Trade skipped: {reason}")
         trade_logger.log_skipped_trade({
             "timestamp": datetime.utcnow().isoformat(),
             "direction": None,
             "confidence": None,
-            "reason_skipped": "Market closed",
+            "reason_skipped": reason,
             "indicators": {}
         })
         return
@@ -59,19 +63,43 @@ def predict_and_trade():
         })
 
         if confidence < 0.55:
-            print(f"[BOT] Low confidence ({confidence:.2f}) — skipping trade.")
+            reason = f"⚠️ Low confidence ({confidence:.2f})"
+            print(f"[BOT] {reason}")
+            telegram_bot.send_text(f"📭 Trade skipped: {reason}")
             trade_logger.log_skipped_trade({
                 "timestamp": datetime.utcnow().isoformat(),
                 "direction": direction,
                 "confidence": confidence,
-                "reason_skipped": "Low confidence",
+                "reason_skipped": reason,
                 "indicators": indicators
             })
             return
 
         current_positions = broker.get_open_trades()
-        has_open_trade = any(pos["instrument"] == config.TRADING_INSTRUMENT for pos in current_positions)
+        same_direction_held = False
 
+        for pos in current_positions:
+            if pos["instrument"] == config.TRADING_INSTRUMENT:
+                side = pos["side"]
+                if (side == "buy" and direction == 1) or (side == "sell" and direction == 0):
+                    same_direction_held = True
+                    break
+
+        if same_direction_held:
+            emoji = "🟢 Buy" if direction == 1 else "🔴 Sell"
+            reason = f"Already holding a {emoji} position"
+            print(f"[BOT] {reason}")
+            telegram_bot.send_text(f"📭 Trade skipped: {reason}")
+            trade_logger.log_skipped_trade({
+                "timestamp": datetime.utcnow().isoformat(),
+                "direction": direction,
+                "confidence": confidence,
+                "reason_skipped": reason,
+                "indicators": indicators
+            })
+            return
+
+        has_open_trade = any(pos["instrument"] == config.TRADING_INSTRUMENT for pos in current_positions)
         if has_open_trade:
             print("[BOT] Existing open trade detected — closing.")
             broker.close_position(config.TRADING_INSTRUMENT)
