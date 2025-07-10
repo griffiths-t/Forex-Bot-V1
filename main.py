@@ -80,8 +80,8 @@ def predict_and_trade():
 
         for pos in current_positions:
             if pos["instrument"] == config.TRADING_INSTRUMENT:
-                side = pos["side"]
-                if (side == "buy" and direction == 1) or (side == "sell" and direction == 0):
+                units = float(pos.get("currentUnits", "0"))
+                if (units > 0 and direction == 1) or (units < 0 and direction == 0):
                     same_direction_held = True
                     break
 
