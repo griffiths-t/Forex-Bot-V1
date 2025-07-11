@@ -110,4 +110,74 @@ def backtest(update: Update, context: CallbackContext):
     try:
         result = backtest_model()
         msg = (
-            f"🔁 *Backtest Results*\
+            f"🔁 *Backtest Results*\n\n"
+            f"📦 *Samples:* {result['samples']}\n"
+            f"🎯 *Train Accuracy:* {result['train_accuracy']}%\n"
+            f"✅ *Test Accuracy:* {result['test_accuracy']}%\n"
+            f"📈 *Confident Accuracy:* {result['confident_accuracy']}%\n"
+            f"📊 *Confidence Coverage:* {result['confidence_coverage']}%"
+        )
+        update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        update.message.reply_text(f"❌ Backtest failed: {e}")
+
+# === Polling Setup ===
+
+def start_polling():
+    updater = Updater(token=config.TELEGRAM_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("status", status))
+    dp.add_handler(CommandHandler("stats", stats))
+    dp.add_handler(CommandHandler("trades", trades))
+    dp.add_handler(CommandHandler("pause", pause))
+    dp.add_handler(CommandHandler("resume", resume))
+    dp.add_handler(CommandHandler("retrain", retrain))
+    dp.add_handler(CommandHandler("backtest", backtest))
+
+    updater.start_polling()
+    updater.idle()
+
+# === Webhook Setup ===
+
+def setup_webhook():
+    from telegram.ext import Dispatcher
+    from flask import Flask, request
+
+    app = Flask(__name__)
+    updater = Updater(token=config.TELEGRAM_TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
+
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("status", status))
+    dispatcher.add_handler(CommandHandler("stats", stats))
+    dispatcher.add_handler(CommandHandler("trades", trades))
+    dispatcher.add_handler(CommandHandler("pause", pause))
+    dispatcher.add_handler(CommandHandler("resume", resume))
+    dispatcher.add_handler(CommandHandler("retrain", retrain))
+    dispatcher.add_handler(CommandHandler("backtest", backtest))
+
+    @app.route(f"/webhook/{config.TELEGRAM_TOKEN}", methods=["POST"])
+    def webhook():
+        dispatcher.process_update(Update.de_json(request.get_json(force=True), bot))
+        return "ok"
+
+    app.run(host="0.0.0.0", port=config.PORT)
+
+# === Util Sending ===
+
+def send_text(msg):
+    try:
+        bot.send_message(chat_id=config.TELEGRAM_CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[Telegram] Send failed: {e}")
+
+def send_trade_alert(direction, confidence, signal_type, units):
+    emoji = "🟢 Buy" if direction == 1 else "🔴 Sell"
+    msg = (
+        f"*Trade Executed*\n"
+        f"{emoji} {signal_type.capitalize()} {abs(units)} units\n"
+        f"*Confidence:* `{confidence:.2f}`"
+    )
+    send_text(msg)
