@@ -1,3 +1,5 @@
+# telegram_bot.py
+
 import config
 import logging
 from telegram import Update, Bot
@@ -6,14 +8,15 @@ from datetime import datetime
 from utils import is_market_open, get_equity, format_gbp
 from broker import get_open_trades
 from trade_logger import get_trade_summary
+from model import retrain_model, backtest_model
 
-# Track bot state and metrics
+# === Global State ===
 TRADING_PAUSED = False
 last_prediction = {"direction": None, "confidence": None, "indicators": {}}
 last_retrain_time = None
 trade_log = []
 
-# Logging setup
+# Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 bot = Bot(token=config.TELEGRAM_TOKEN)
 
@@ -37,7 +40,7 @@ def status(update: Update, context: CallbackContext):
 
     open_trades = get_open_trades()
     trade_count = len(open_trades)
-    total_value = sum(abs(float(t.get("currentUnits", 0))) for t in open_trades)
+    total_value = sum(abs(float(t["currentUnits"])) for t in open_trades)
     total_gbp = format_gbp(total_value)
 
     msg = (
@@ -62,9 +65,7 @@ def resume(update: Update, context: CallbackContext):
     update.message.reply_text("▶️ Trading resumed.")
 
 def retrain(update: Update, context: CallbackContext):
-    from model import retrain_model
     global last_retrain_time
-
     try:
         retrain_model()
         last_retrain_time = datetime.utcnow()
@@ -79,7 +80,6 @@ def trades(update: Update, context: CallbackContext):
             if not lines:
                 update.message.reply_text("No trades logged yet.")
                 return
-
             msg = "*Recent Trades:*\n"
             for line in lines:
                 msg += f"`{line.strip()}`\n"
@@ -90,29 +90,25 @@ def trades(update: Update, context: CallbackContext):
 def stats(update: Update, context: CallbackContext):
     try:
         summary = get_trade_summary()
-
-        total = summary.get("total_trades", 0)
-        wins = summary.get("wins", 0)
-        losses = summary.get("losses", 0)
-        win_rate = summary.get("win_rate", 0.0)
-        total_pl = summary.get("total_pl", 0.0)
-
-        if total == 0:
-            update.message.reply_text("📊 No closed trades yet.", parse_mode="Markdown")
-            return
-
         msg = (
             f"📈 *Trading Stats*\n\n"
-            f"📊 *Total Trades:* {total}\n"
-            f"✅ *Wins:* {wins}\n"
-            f"❌ *Losses:* {losses}\n"
-            f"🔥 *Win Rate:* {win_rate:.2f}%\n"
-            f"💰 *Net P/L:* {format_gbp(total_pl)}"
+            f"📊 *Total Trades:* {summary['total_trades']}\n"
+            f"✅ *Wins:* {summary['wins']}\n"
+            f"❌ *Losses:* {summary['losses']}\n"
+            f"🔥 *Win Rate:* {summary['win_rate']:.2f}%\n"
+            f"💰 *Net P/L:* {format_gbp(summary['total_pl'])}"
         )
         update.message.reply_text(msg, parse_mode="Markdown")
-
     except Exception as e:
         update.message.reply_text(f"❌ Stats error: {e}")
+
+def backtest(update: Update, context: CallbackContext):
+    try:
+        update.message.reply_text("🔍 Running backtest, please wait...")
+        report = backtest_model()
+        update.message.reply_text(f"📊 *Backtest Results:*\n\n{report}", parse_mode="Markdown")
+    except Exception as e:
+        update.message.reply_text(f"❌ Backtest failed: {e}")
 
 # === Webhook Setup ===
 
@@ -131,13 +127,14 @@ def setup_webhook():
     dispatcher.add_handler(CommandHandler("retrain", retrain))
     dispatcher.add_handler(CommandHandler("trades", trades))
     dispatcher.add_handler(CommandHandler("stats", stats))
+    dispatcher.add_handler(CommandHandler("backtest", backtest))
 
     @app.route(f"/webhook/{config.TELEGRAM_TOKEN}", methods=["POST"])
     def webhook():
         dispatcher.process_update(Update.de_json(request.get_json(force=True), bot))
         return "ok"
 
-    app.run(host='0.0.0.0', port=config.PORT)
+    app.run(host="0.0.0.0", port=config.PORT)
 
 # === Polling Setup ===
 
@@ -152,6 +149,7 @@ def start_polling():
     dp.add_handler(CommandHandler("retrain", retrain))
     dp.add_handler(CommandHandler("trades", trades))
     dp.add_handler(CommandHandler("stats", stats))
+    dp.add_handler(CommandHandler("backtest", backtest))
 
     updater.start_polling()
     updater.idle()
