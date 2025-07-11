@@ -3,6 +3,7 @@ import schedule
 import threading
 from datetime import datetime
 from flask import Flask, request
+import os
 
 import config
 import broker
@@ -65,6 +66,7 @@ def predict_and_trade():
 
         direction, confidence, indicators = result
 
+        # ✅ Update last prediction and send alert regardless of trade
         telegram_bot.last_prediction.update({
             "direction": direction,
             "confidence": confidence,
@@ -176,13 +178,16 @@ def run_schedule():
 if __name__ == "__main__":
     print("✅ Bot is live: 15-min prediction + daily retrain at 23:00 UTC")
 
-    # 🔍 Run one prediction immediately on startup
-    print("[BOOT] Running initial prediction test...")
-    try:
-        predict_and_trade()
-    except Exception as e:
-        print(f"[BOOT ERROR] Initial prediction failed: {e}")
+    # 🔁 Auto-train if model is missing
+    if not os.path.exists(config.MODEL_PATH):
+        print("[INIT] No model.pkl found — training now...")
+        model.retrain_model()
+        telegram_bot.last_retrain_time = datetime.utcnow()
 
+    # 🧠 Run one prediction immediately on startup
+    predict_and_trade()
+
+    # 🧵 Start server + scheduler threads
     if config.TELEGRAM_USE_WEBHOOK:
         telegram_bot.setup_webhook()
         threading.Thread(target=keep_alive, daemon=True).start()
