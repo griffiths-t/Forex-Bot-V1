@@ -1,9 +1,9 @@
+import os
 import time
-import schedule
 import threading
 from datetime import datetime
 from flask import Flask, request
-import os
+from apscheduler.schedulers.background import BackgroundScheduler
 
 import config
 import broker
@@ -29,7 +29,6 @@ def keep_alive():
 
 def predict_and_trade():
     print(f"[{datetime.utcnow()}] ✅ predict_and_trade() called")
-
     try:
         if config.TRADING_PAUSED:
             reason = "⏸️ Bot paused"
@@ -66,7 +65,6 @@ def predict_and_trade():
 
         direction, confidence, indicators = result
 
-        # ✅ Update last prediction and send alert regardless of trade
         telegram_bot.last_prediction.update({
             "direction": direction,
             "confidence": confidence,
@@ -162,21 +160,15 @@ def log_scheduler_activity():
 def heartbeat():
     print(f"[HEARTBEAT] Bot alive at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
 
-# ⏰ Schedule jobs
-schedule.every(15).minutes.do(predict_and_trade)
-schedule.every().day.at("23:00").do(retrain_daily)
-schedule.every().minute.do(log_scheduler_activity)
-schedule.every().minute.do(heartbeat)
-schedule.every().day.at("00:00").do(reset_scheduler_log)
-
-def run_schedule():
-    while True:
-        try:
-            schedule.run_pending()
-            print(f"[SCHEDULER] Tick: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
-        except Exception as e:
-            print(f"[SCHEDULER ERROR] {e}")
-        time.sleep(1)
+def start_scheduler():
+    scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler.add_job(predict_and_trade, "interval", minutes=15)
+    scheduler.add_job(retrain_daily, "cron", hour=23, minute=0)
+    scheduler.add_job(log_scheduler_activity, "interval", minutes=1)
+    scheduler.add_job(heartbeat, "interval", minutes=1)
+    scheduler.add_job(reset_scheduler_log, "cron", hour=0, minute=0)
+    scheduler.start()
+    print("[SCHEDULER] APScheduler started")
 
 if __name__ == "__main__":
     print("✅ Bot is live: 15-min prediction + daily retrain at 23:00 UTC")
@@ -187,12 +179,11 @@ if __name__ == "__main__":
         telegram_bot.last_retrain_time = datetime.utcnow()
 
     predict_and_trade()
+    start_scheduler()
 
     if config.TELEGRAM_USE_WEBHOOK:
         telegram_bot.setup_webhook()
         threading.Thread(target=keep_alive, daemon=True).start()
-        threading.Thread(target=run_schedule, daemon=True).start()
     else:
         threading.Thread(target=keep_alive, daemon=True).start()
-        threading.Thread(target=run_schedule, daemon=True).start()
         telegram_bot.start_polling()
