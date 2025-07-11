@@ -3,9 +3,10 @@ import numpy as np
 import pandas as pd
 import joblib
 from ta.momentum import RSIIndicator, StochasticOscillator, ROCIndicator
-from ta.trend import SMAIndicator, MACD
-from ta.volatility import AverageTrueRange
+from ta.trend import SMAIndicator, MACD, ADXIndicator
+from ta.volatility import AverageTrueRange, BollingerBands
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
@@ -28,7 +29,7 @@ def preprocess_candles(candles):
 
     df.set_index("time", inplace=True)
 
-    # Indicators
+    # Standard indicators
     df["rsi"] = RSIIndicator(close=df["close"]).rsi()
     df["sma5"] = SMAIndicator(close=df["close"], window=5).sma_indicator()
     df["sma15"] = SMAIndicator(close=df["close"], window=15).sma_indicator()
@@ -36,9 +37,14 @@ def preprocess_candles(candles):
     df["stoch"] = StochasticOscillator(high=df["high"], low=df["low"], close=df["close"]).stoch()
     df["roc"] = ROCIndicator(close=df["close"]).roc()
     df["atr"] = AverageTrueRange(high=df["high"], low=df["low"], close=df["close"]).average_true_range()
-    df["hour"] = pd.to_datetime(df.index).hour
 
-    # New contextual features
+    # New indicators
+    df["vwap"] = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
+    bb = BollingerBands(close=df["close"])
+    df["bb_percent"] = bb.bollinger_pband()
+    df["adx"] = ADXIndicator(high=df["high"], low=df["low"], close=df["close"]).adx()
+
+    df["hour"] = pd.to_datetime(df.index).hour
     df["body_ratio"] = abs(df["close"] - df["open"]) / (df["high"] - df["low"] + 1e-6)
     df["range"] = df["high"] - df["low"]
     df["ma_slope"] = df["sma15"].diff()
@@ -80,7 +86,8 @@ def create_features_labels(df):
     df = label_tp_sl(df)
     features = [
         "rsi", "macd", "sma5", "sma15", "stoch", "roc", "atr", "hour",
-        "body_ratio", "range", "ma_slope"
+        "body_ratio", "range", "ma_slope",
+        "vwap", "bb_percent", "adx"
     ]
     X = df[features]
     y = df["direction"]
@@ -95,8 +102,10 @@ def retrain_model():
     df = preprocess_candles(candles)
     X, y = create_features_labels(df)
 
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    base_model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model = CalibratedClassifierCV(base_model, method='sigmoid', cv=5)
     model.fit(X, y)
+
     joblib.dump(model, config.MODEL_PATH)
 
 def predict_from_latest_candles():
@@ -112,7 +121,8 @@ def predict_from_latest_candles():
     model = joblib.load(config.MODEL_PATH)
     X = df.iloc[-1:][[
         "rsi", "macd", "sma5", "sma15", "stoch", "roc", "atr", "hour",
-        "body_ratio", "range", "ma_slope"
+        "body_ratio", "range", "ma_slope",
+        "vwap", "bb_percent", "adx"
     ]]
     proba = model.predict_proba(X)[0]
     prediction = model.predict(X)[0]
@@ -129,7 +139,9 @@ def backtest_model():
     X, y = create_features_labels(df)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, shuffle=False)
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
+
+    base_model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model = CalibratedClassifierCV(base_model, method='sigmoid', cv=5)
     model.fit(X_train, y_train)
 
     y_train_pred = model.predict(X_train)
