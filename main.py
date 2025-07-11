@@ -1,3 +1,4 @@
+# main.py
 import time
 import schedule
 import threading
@@ -14,7 +15,6 @@ from utils import is_market_open
 app = Flask(__name__)
 SCHEDULER_LOG_FILE = "scheduler_log.txt"
 
-# === Flask Keep-Alive Routes ===
 def keep_alive():
     @app.route('/')
     def home():
@@ -27,7 +27,6 @@ def keep_alive():
 
     app.run(host='0.0.0.0', port=config.PORT)
 
-# === Prediction and Trading Logic ===
 def predict_and_trade():
     print(f"[{datetime.utcnow()}] ✅ predict_and_trade() called")
 
@@ -132,7 +131,6 @@ def predict_and_trade():
         print(f"[ERROR] Prediction or trade error: {e}")
         telegram_bot.send_text(f"❌ Trade error: {e}")
 
-# === Daily Retraining ===
 def retrain_daily():
     try:
         print("[BOT] Running daily retrain...")
@@ -142,7 +140,6 @@ def retrain_daily():
     except Exception as e:
         telegram_bot.send_text(f"❌ Retrain failed: {e}")
 
-# === Scheduler Logging ===
 def reset_scheduler_log():
     with open(SCHEDULER_LOG_FILE, "w") as f:
         f.write("")
@@ -155,38 +152,25 @@ def log_scheduler_activity():
         f.write(log_line)
     print(log_line.strip())
 
-# === Schedule Jobs ===
+# Schedule jobs
 schedule.every(15).minutes.do(predict_and_trade)
 schedule.every().day.at("23:00").do(retrain_daily)
 schedule.every().minute.do(log_scheduler_activity)
 schedule.every().day.at("00:00").do(reset_scheduler_log)
 
 def run_schedule():
-    print("[SCHEDULER] Thread started")
     while True:
         schedule.run_pending()
         time.sleep(1)
 
-# === Launch ===
 if __name__ == "__main__":
     print("✅ Bot is live: 15-min prediction + daily retrain at 23:00 UTC")
 
-    # Uncomment to force one immediate prediction for testing:
-    # predict_and_trade()
-
-    flask_thread = threading.Thread(target=keep_alive)
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    scheduler_thread = threading.Thread(target=run_schedule)
-    scheduler_thread.daemon = True
-    scheduler_thread.start()
-
     if config.TELEGRAM_USE_WEBHOOK:
         telegram_bot.setup_webhook()
+        threading.Thread(target=keep_alive).start()
+        threading.Thread(target=run_schedule).start()
     else:
+        threading.Thread(target=keep_alive).start()
+        threading.Thread(target=run_schedule).start()
         telegram_bot.start_polling()
-
-    # Keep main thread alive
-    while True:
-        time.sleep(10)
