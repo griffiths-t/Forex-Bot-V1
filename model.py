@@ -141,5 +141,5 @@ def backtest_model():
         "train_accuracy": round(train_acc, 2),
         "test_accuracy": round(test_acc, 2),
         "confident_accuracy": round(confident_acc, 2),
-        "confident_coverage": round(coverage, 2)
+        "confidence_coverage": round(coverage, 2)
     }
