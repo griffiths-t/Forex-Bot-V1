@@ -171,9 +171,9 @@ if __name__ == "__main__":
 
     if config.TELEGRAM_USE_WEBHOOK:
         telegram_bot.setup_webhook()
-        threading.Thread(target=keep_alive).start()
-        threading.Thread(target=run_schedule).start()
+        threading.Thread(target=keep_alive, daemon=True).start()
+        threading.Thread(target=run_schedule, daemon=True).start()
     else:
-        threading.Thread(target=keep_alive).start()
-        threading.Thread(target=run_schedule).start()
+        threading.Thread(target=keep_alive, daemon=True).start()
+        threading.Thread(target=run_schedule, daemon=True).start()
         telegram_bot.start_polling()
