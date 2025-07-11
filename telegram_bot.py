@@ -1,110 +1,104 @@
-import telegram
-from telegram.ext import Updater, CommandHandler, Dispatcher
-from datetime import datetime
-
 import config
-import model
-import broker
-import trade_logger
-from utils import is_market_open, format_gbp
+import telegram
+import pandas as pd
+from datetime import datetime
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ContextTypes
+)
 
-# Setup bot
-bot = telegram.Bot(token=config.TELEGRAM_TOKEN)
-updater = Updater(token=config.TELEGRAM_TOKEN, use_context=True)
-dispatcher: Dispatcher = updater.dispatcher
+BOT_TOKEN = config.TELEGRAM_TOKEN
+CHAT_ID = config.TELEGRAM_CHAT_ID
 
-# Shared state
+# Store latest prediction for status report
 last_prediction = {
     "direction": None,
     "confidence": None,
-    "indicators": None
+    "indicators": {}
 }
 last_retrain_time = None
 
-def start(update, context):
-    context.bot.send_message(chat_id=update.effective_chat.id, text="👋 Bot is online and ready to trade!")
+def format_prediction():
+    direction = last_prediction.get("direction")
+    confidence = last_prediction.get("confidence")
+    if direction is None:
+        return "No prediction made yet."
+    emoji = "🟢 Buy" if direction == 1 else "🔴 Sell"
+    return f"{emoji} ({confidence:.2f})"
 
-def status(update, context):
-    try:
-        open_trades = broker.get_open_trades()
-        num_trades = len(open_trades)
-
-        # Estimate value using live price
-        candles = broker.get_candles(config.TRADING_INSTRUMENT, count=1)
-        current_price = float(candles[-1]["mid"]["c"])
-        trade_value_gbp = config.TRADING_UNITS * current_price * num_trades
-        formatted_value = format_gbp(trade_value_gbp)
-
-        summary_msg = f"📊 *Bot Status*\n"
-        summary_msg += f"• 🔄 Status: {'⏸️ Paused' if config.TRADING_PAUSED else '▶️ Active'}\n"
-        summary_msg += f"• 🕒 Market Open: {'✅ Yes' if is_market_open() else '❌ No'}\n"
-        summary_msg += f"• 📈 Open Trades: {num_trades}\n"
-        summary_msg += f"• 💷 Trade Value: {formatted_value} GBP\n"
-        summary_msg += f"• 🧠 Last Retrain: `{last_retrain_time if last_retrain_time else 'Never'}`\n\n"
-
-        if last_prediction["direction"] is not None:
-            direction = "🟢 Buy" if last_prediction["direction"] == 1 else "🔴 Sell"
-            confidence = f"{last_prediction['confidence']:.2f}"
-            summary_msg += f"🤖 *Last Prediction*\n"
-            summary_msg += f"• Direction: {direction}\n"
-            summary_msg += f"• Confidence: {confidence}\n"
-        else:
-            summary_msg += f"🤖 *Last Prediction*: _None yet._"
-
-        context.bot.send_message(chat_id=update.effective_chat.id, text=summary_msg, parse_mode=telegram.ParseMode.MARKDOWN)
-    except Exception as e:
-        context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Error: {e}")
-
-def retrain_command(update, context):
-    global last_retrain_time
-    try:
-        model.retrain_model()
-        last_retrain_time = datetime.utcnow()
-        context.bot.send_message(chat_id=update.effective_chat.id, text="🧠 Model retrained successfully.")
-    except Exception as e:
-        context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Retrain failed: {e}")
-
-def stats(update, context):
-    try:
-        stats = trade_logger.get_trade_summary()
-        msg = (
-            f"📊 *Trade Performance Stats*\n"
-            f"• 📈 Total Trades: {stats['total_trades']}\n"
-            f"• ✅ Wins: {stats['wins']}\n"
-            f"• ❌ Losses: {stats['losses']}\n"
-            f"• 🔥 Win Rate: {stats['win_rate']:.1f}%\n"
-            f"• 💰 Net P/L: {format_gbp(stats['total_pl'])}"
-        )
-        context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode=telegram.ParseMode.MARKDOWN)
-    except Exception as e:
-        context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Error: {e}")
+def format_market_status():
+    from utils import is_market_open
+    return "✅ Yes" if is_market_open() else "❌ No"
 
 def send_text(message):
-    bot.send_message(chat_id=config.TELEGRAM_CHAT_ID, text=message)
+    bot = telegram.Bot(token=BOT_TOKEN)
+    bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="Markdown")
 
 def send_trade_alert(direction, confidence, label, units):
     emoji = "🟢 Buy" if direction == 1 else "🔴 Sell"
-    msg = f"{emoji} {label.upper()} signal\nConfidence: {confidence:.2f}\nUnits: {units}"
+    msg = (
+        f"*ForexBot*\n"
+        f"{emoji} *{label.upper()}* signal\n"
+        f"Confidence: *{confidence:.2f}*\n"
+        f"Units: *{units}*"
+    )
     send_text(msg)
 
 def setup_webhook():
-    bot.set_webhook(url=config.WEBHOOK_URL)
+    from telegram.ext import Application
+    application = Application.builder().token(BOT_TOKEN).build()
+    url = f"{config.PUBLIC_URL}/webhook/{BOT_TOKEN}"
+    application.bot.set_webhook(url=url)
 
-def start_polling():
-    updater.start_polling()
+def handle_webhook(update_json):
+    update = Update.de_json(update_json, telegram.Bot(BOT_TOKEN))
+    context = None
+    command = update.message.text
 
-def handle_webhook(update_data):
-    if update_data is None:
-        print("[WEBHOOK] Empty payload.")
-        return
-    try:
-        update = telegram.Update.de_json(update_data, bot)
-        dispatcher.process_update(update)
-    except Exception as e:
-        print(f"[WEBHOOK] Failed to process update: {e}")
-
-# Register commands
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("status", status))
-dispatcher.add_handler(CommandHandler("retrain", retrain_command))
-dispatcher.add_handler(CommandHandler("stats", stats))
+    if command == "/start":
+        send_text("👋 Welcome! I am your Forex trading bot.")
+    elif command == "/status":
+        prediction = format_prediction()
+        market_status = format_market_status()
+        paused = "⏸️ Paused" if config.TRADING_PAUSED else "▶️ Active"
+        retrain_time = last_retrain_time or "Not yet"
+        send_text(
+            "*📊 Bot Status*\n"
+            f"• 🔄 Status: {paused}\n"
+            f"• 🕒 Market Open: {market_status}\n"
+            f"• 🧠 Last Retrain: `{retrain_time}`\n\n"
+            "*🤖 Last Prediction*\n"
+            f"• Direction: {prediction}"
+        )
+    elif command == "/retrain":
+        from model import retrain_model
+        try:
+            retrain_model()
+            global last_retrain_time
+            last_retrain_time = datetime.utcnow()
+            send_text("🧠 Retrain complete.")
+        except Exception as e:
+            send_text(f"❌ Retrain failed: {e}")
+    elif command == "/pause":
+        config.TRADING_PAUSED = True
+        send_text("⏸️ Trading paused by user.")
+    elif command == "/resume":
+        config.TRADING_PAUSED = False
+        send_text("▶️ Trading resumed by user.")
+    elif command == "/trades":
+        try:
+            df = pd.read_csv("trade_log.csv")
+            if df.empty:
+                send_text("📭 No trades have been logged yet.")
+                return
+            last_5 = df.tail(5)
+            lines = []
+            for _, row in last_5.iterrows():
+                time = row["timestamp"][:16].replace("T", " ")
+                side = "🟢 Buy" if int(row["direction"]) == 1 else "🔴 Sell"
+                conf = f"{row['confidence']:.2f}"
+                lines.append(f"{time} | {side} | {conf}")
+            msg = "*📄 Last 5 Trades:*\n" + "\n".join(lines)
+            send_text(msg)
+        except Exception as e:
+            send_text(f"❌ Could not load trades: {e}")
