@@ -42,7 +42,10 @@ def preprocess_candles(candles):
     df["vwap"] = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
     bb = BollingerBands(close=df["close"])
     df["bb_percent"] = bb.bollinger_pband()
-    df["adx"] = ADXIndicator(high=df["high"], low=df["low"], close=df["close"]).adx()
+
+    # ✅ Fix for RuntimeWarning in ADX calculation
+    adx = ADXIndicator(high=df["high"], low=df["low"], close=df["close"]).adx()
+    df["adx"] = adx.fillna(0)  # Avoids invalid division warnings
 
     df["hour"] = pd.to_datetime(df.index).hour
     df["body_ratio"] = abs(df["close"] - df["open"]) / (df["high"] - df["low"] + 1e-6)
