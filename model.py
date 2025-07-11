@@ -12,8 +12,8 @@ from sklearn.metrics import accuracy_score
 import broker
 import config
 
-TP_PIPS = 15  # take profit in pips
-SL_PIPS = 10  # stop loss in pips
+TP_PIPS = 15
+SL_PIPS = 10
 PIP_VALUE = 0.0001  # for GBP/USD
 
 def preprocess_candles(candles):
@@ -28,7 +28,7 @@ def preprocess_candles(candles):
 
     df.set_index("time", inplace=True)
 
-    # Technical indicators
+    # Indicators
     df["rsi"] = RSIIndicator(close=df["close"]).rsi()
     df["sma5"] = SMAIndicator(close=df["close"], window=5).sma_indicator()
     df["sma15"] = SMAIndicator(close=df["close"], window=15).sma_indicator()
@@ -37,6 +37,11 @@ def preprocess_candles(candles):
     df["roc"] = ROCIndicator(close=df["close"]).roc()
     df["atr"] = AverageTrueRange(high=df["high"], low=df["low"], close=df["close"]).average_true_range()
     df["hour"] = pd.to_datetime(df.index).hour
+
+    # New contextual features
+    df["body_ratio"] = abs(df["close"] - df["open"]) / (df["high"] - df["low"] + 1e-6)
+    df["range"] = df["high"] - df["low"]
+    df["ma_slope"] = df["sma15"].diff()
 
     df.dropna(inplace=True)
     return df
@@ -58,10 +63,10 @@ def label_tp_sl(df, tp_pips=TP_PIPS, sl_pips=SL_PIPS, pip_value=PIP_VALUE):
         label = np.nan
         for h, l in zip(future_high, future_low):
             if h - entry >= tp_threshold:
-                label = 1  # TP hit
+                label = 1
                 break
             elif entry - l >= sl_threshold:
-                label = 0  # SL hit
+                label = 0
                 break
         labels.append(label)
 
@@ -73,7 +78,10 @@ def label_tp_sl(df, tp_pips=TP_PIPS, sl_pips=SL_PIPS, pip_value=PIP_VALUE):
 
 def create_features_labels(df):
     df = label_tp_sl(df)
-    features = ["rsi", "macd", "sma5", "sma15", "stoch", "roc", "atr", "hour"]
+    features = [
+        "rsi", "macd", "sma5", "sma15", "stoch", "roc", "atr", "hour",
+        "body_ratio", "range", "ma_slope"
+    ]
     X = df[features]
     y = df["direction"]
     return X, y
@@ -102,7 +110,10 @@ def predict_from_latest_candles():
         raise Exception("No valid candle data for prediction")
 
     model = joblib.load(config.MODEL_PATH)
-    X = df.iloc[-1:][["rsi", "macd", "sma5", "sma15", "stoch", "roc", "atr", "hour"]]
+    X = df.iloc[-1:][[
+        "rsi", "macd", "sma5", "sma15", "stoch", "roc", "atr", "hour",
+        "body_ratio", "range", "ma_slope"
+    ]]
     proba = model.predict_proba(X)[0]
     prediction = model.predict(X)[0]
 
@@ -128,11 +139,11 @@ def backtest_model():
     train_acc = accuracy_score(y_train, y_train_pred) * 100
     test_acc = accuracy_score(y_test, y_test_pred) * 100
 
-    confident_mask = (y_prob.max(axis=1) >= 0.55)
-    if confident_mask.sum() > 0:
-        confident_acc = accuracy_score(y_test[confident_mask], y_test_pred[confident_mask]) * 100
-    else:
-        confident_acc = 0
+    confident_mask = (y_prob.max(axis=1) >= 0.60)
+    confident_acc = accuracy_score(
+        y_test[confident_mask],
+        y_test_pred[confident_mask]
+    ) * 100 if confident_mask.sum() > 0 else 0
 
     coverage = confident_mask.sum() / len(y_test) * 100
 
