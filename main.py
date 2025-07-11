@@ -1,4 +1,3 @@
-# main.py
 import time
 import schedule
 import threading
@@ -66,11 +65,15 @@ def predict_and_trade():
 
         direction, confidence, indicators = result
 
+        # ✅ Always update last prediction
         telegram_bot.last_prediction.update({
             "direction": direction,
             "confidence": confidence,
             "indicators": indicators
         })
+
+        emoji = "🟢 Buy" if direction == 1 else "🔴 Sell" if direction == 0 else "⚪ Hold"
+        print(f"[PREDICT] {emoji}, confidence: {confidence:.2f}")
 
         if confidence < 0.55:
             reason = f"⚠️ Low confidence ({confidence:.2f})"
@@ -96,7 +99,6 @@ def predict_and_trade():
                     break
 
         if same_direction_held:
-            emoji = "🟢 Buy" if direction == 1 else "🔴 Sell"
             reason = f"Already holding a {emoji} position"
             print(f"[BOT] {reason}")
             telegram_bot.send_text(f"📭 Trade skipped: {reason}")
