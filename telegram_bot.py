@@ -1,59 +1,46 @@
 import config
-import broker
-import trade_logger
-from utils import format_gbp
-from telegram import Update, ParseMode
+import logging
+from telegram import Update, Bot
 from telegram.ext import Updater, CommandHandler, CallbackContext
+from datetime import datetime
 
+# Track bot state and metrics
 TRADING_PAUSED = False
-last_prediction = {}
+last_prediction = {"direction": None, "confidence": None, "indicators": {}}
 last_retrain_time = None
+trade_log = []
 
-def send_text(text):
-    url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": config.TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print(f"[TELEGRAM] Failed to send message: {e}")
+# Set up logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+bot = Bot(token=config.TELEGRAM_TOKEN)
 
-def send_trade_alert(direction, confidence, side, units):
-    emoji = "🟢" if direction == 1 else "🔴"
-    msg = (
-        f"{emoji} *{side.upper()}* {side.capitalize()} signal\n"
-        f"Confidence: *{confidence:.2f}*\n"
-        f"Units: *{units}*"
-    )
-    send_text(msg)
-
-def status(update: Update, context: CallbackContext):
-    try:
-        open_trades = broker.get_open_trades()
-        trade_value = sum(abs(float(t['currentUnits'])) for t in open_trades if t['instrument'] == config.TRADING_INSTRUMENT)
-        trade_count = len(open_trades)
-
-        msg = "📊 *Bot Status*\n"
-        msg += f"• 🔄 Status: {'⏸️ Paused' if TRADING_PAUSED else '▶️ Active'}\n"
-        msg += f"• 📈 Open Trades: *{trade_count}*\n"
-        msg += f"• 💷 Trade Value: *{format_gbp(trade_value)}*\n"
-        if last_retrain_time:
-            msg += f"• 🧠 Last Retrain: `{last_retrain_time}`\n"
-        if last_prediction:
-            dir_emoji = "🟢 Buy" if last_prediction.get("direction") == 1 else "🔴 Sell"
-            msg += "\n🤖 *Last Prediction*\n"
-            msg += f"• Direction: *{dir_emoji}*\n"
-            msg += f"• Confidence: *{last_prediction.get('confidence'):.2f}*\n"
-
-        update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        update.message.reply_text(f"❌ Error in /status: {e}")
+# === Command Handlers ===
 
 def start(update: Update, context: CallbackContext):
-    update.message.reply_text("✅ Forex bot is running!")
+    update.message.reply_text("👋 Bot is online and ready.")
+
+def status(update: Update, context: CallbackContext):
+    global last_prediction, last_retrain_time
+
+    direction = last_prediction.get("direction")
+    confidence = last_prediction.get("confidence")
+    indicators = last_prediction.get("indicators", {})
+
+    dir_str = "🟢 Buy" if direction == 1 else "🔴 Sell" if direction == 0 else "❓ Unknown"
+    retrain_str = last_retrain_time.strftime('%Y-%m-%d %H:%M:%S UTC') if last_retrain_time else "Never"
+
+    msg = (
+        f"📊 *Bot Status*\n\n"
+        f"*Prediction:* {dir_str}\n"
+        f"*Confidence:* {confidence:.2f}\n"
+        f"*Indicators:*\n"
+    )
+
+    for k, v in indicators.items():
+        msg += f"`{k}`: `{round(v, 2)}`\n"
+
+    msg += f"\n*Retrained:* {retrain_str}"
+    update.message.reply_text(msg, parse_mode="Markdown")
 
 def pause(update: Update, context: CallbackContext):
     global TRADING_PAUSED
@@ -65,74 +52,85 @@ def resume(update: Update, context: CallbackContext):
     TRADING_PAUSED = False
     update.message.reply_text("▶️ Trading resumed.")
 
-def trades(update: Update, context: CallbackContext):
-    try:
-        trades = broker.get_open_trades()
-        if not trades:
-            update.message.reply_text("💤 No open trades.")
-            return
-
-        msg = "📄 *Open Trades:*\n"
-        for trade in trades:
-            side = "🟢 Buy" if int(trade["currentUnits"]) > 0 else "🔴 Sell"
-            pl = float(trade["unrealizedPL"])
-            msg += (
-                f"• {side} *{trade['instrument']}* | Units: *{trade['currentUnits']}* | "
-                f"P/L: *{format_gbp(pl)}*\n"
-            )
-        update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        update.message.reply_text(f"❌ Error in /trades: {e}")
-
 def retrain(update: Update, context: CallbackContext):
+    from model import retrain_model
+    global last_retrain_time
+
     try:
-        import model
-        model.retrain_model()
-        global last_retrain_time
-        from datetime import datetime
+        retrain_model()
         last_retrain_time = datetime.utcnow()
-        update.message.reply_text("🧠 Model retrained successfully.")
+        update.message.reply_text("🧠 Model retrained.")
     except Exception as e:
         update.message.reply_text(f"❌ Retrain failed: {e}")
 
-def stats(update: Update, context: CallbackContext):
+def trades(update: Update, context: CallbackContext):
     try:
-        trades = trade_logger.get_trade_summary()
-        msg = (
-            "📊 *Trade Performance Stats*\n"
-            f"• 📈 Total Trades: *{trades['total']}*\n"
-            f"• ✅ Wins: *{trades['wins']}*\n"
-            f"• ❌ Losses: *{trades['losses']}*\n"
-            f"• 🔥 Win Rate: *{trades['win_rate']}%*\n"
-            f"• 💰 Net P/L: *{format_gbp(trades['net_pl'])}*"
-        )
-        update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        update.message.reply_text(f"❌ Error in /stats: {e}")
+        with open("trade_log.csv", "r") as f:
+            lines = f.readlines()[-5:]
+            if not lines:
+                update.message.reply_text("No trades logged yet.")
+                return
 
-def setup_bot():
-    updater = Updater(config.TELEGRAM_TOKEN, use_context=True)
+            msg = "*Recent Trades:*\n"
+            for line in lines:
+                msg += f"`{line.strip()}`\n"
+            update.message.reply_text(msg, parse_mode="Markdown")
+    except FileNotFoundError:
+        update.message.reply_text("Trade log not found.")
+
+# === Webhook Setup ===
+
+def setup_webhook():
+    from telegram.ext import Dispatcher
+    from flask import Flask, request
+
+    app = Flask(__name__)
+    updater = Updater(token=config.TELEGRAM_TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
+
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("status", status))
+    dispatcher.add_handler(CommandHandler("pause", pause))
+    dispatcher.add_handler(CommandHandler("resume", resume))
+    dispatcher.add_handler(CommandHandler("retrain", retrain))
+    dispatcher.add_handler(CommandHandler("trades", trades))
+
+    @app.route(f"/webhook/{config.TELEGRAM_TOKEN}", methods=["POST"])
+    def webhook():
+        dispatcher.process_update(Update.de_json(request.get_json(force=True), bot))
+        return "ok"
+
+    app.run(host='0.0.0.0', port=config.PORT)
+
+# === Polling Setup ===
+
+def start_polling():
+    updater = Updater(token=config.TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("status", status))
     dp.add_handler(CommandHandler("pause", pause))
     dp.add_handler(CommandHandler("resume", resume))
-    dp.add_handler(CommandHandler("trades", trades))
     dp.add_handler(CommandHandler("retrain", retrain))
-    dp.add_handler(CommandHandler("stats", stats))
+    dp.add_handler(CommandHandler("trades", trades))
 
-    return updater
-
-def start_polling():
-    updater = setup_bot()
-    print("🤖 Telegram bot polling started.")
     updater.start_polling()
     updater.idle()
 
-def handle_webhook(data):
-    from telegram import Bot, Update
-    bot = Bot(token=config.TELEGRAM_TOKEN)
-    update = Update.de_json(data, bot)
-    dispatcher = setup_bot().dispatcher
-    dispatcher.process_update(update)
+# === Text Sending ===
+
+def send_text(msg):
+    try:
+        bot.send_message(chat_id=config.TELEGRAM_CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[Telegram] Send failed: {e}")
+
+def send_trade_alert(direction, confidence, signal_type, units):
+    emoji = "🟢 Buy" if direction == 1 else "🔴 Sell"
+    msg = (
+        f"*Trade Executed*\n"
+        f"{emoji} {signal_type.capitalize()} {abs(units)} units\n"
+        f"*Confidence:* `{confidence:.2f}`"
+    )
+    send_text(msg)
