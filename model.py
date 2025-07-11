@@ -2,16 +2,19 @@
 import numpy as np
 import pandas as pd
 import joblib
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from ta.momentum import RSIIndicator, StochasticOscillator, ROCIndicator
 from ta.trend import SMAIndicator, MACD
 from ta.volatility import AverageTrueRange
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
 import broker
 import config
 
-# === Data Preprocessing ===
+TP_PIPS = 15  # take profit in pips
+SL_PIPS = 10  # stop loss in pips
+PIP_VALUE = 0.0001  # for GBP/USD
 
 def preprocess_candles(candles):
     df = pd.DataFrame([{
@@ -25,7 +28,7 @@ def preprocess_candles(candles):
 
     df.set_index("time", inplace=True)
 
-    # Indicators
+    # Technical indicators
     df["rsi"] = RSIIndicator(close=df["close"]).rsi()
     df["sma5"] = SMAIndicator(close=df["close"], window=5).sma_indicator()
     df["sma15"] = SMAIndicator(close=df["close"], window=15).sma_indicator()
@@ -38,17 +41,42 @@ def preprocess_candles(candles):
     df.dropna(inplace=True)
     return df
 
-def create_features_labels(df):
-    df["return"] = df["close"].pct_change().shift(-1)
-    df["direction"] = np.where(df["return"] > 0, 1, 0)
-    df.dropna(inplace=True)
+def label_tp_sl(df, tp_pips=TP_PIPS, sl_pips=SL_PIPS, pip_value=PIP_VALUE):
+    labels = []
+    closes = df["close"].values
+    highs = df["high"].values
+    lows = df["low"].values
 
+    tp_threshold = tp_pips * pip_value
+    sl_threshold = sl_pips * pip_value
+
+    for i in range(len(df)):
+        entry = closes[i]
+        future_high = highs[i+1:i+6]  # next 5 candles (~1 hour)
+        future_low = lows[i+1:i+6]
+
+        label = np.nan
+        for h, l in zip(future_high, future_low):
+            if h - entry >= tp_threshold:
+                label = 1  # TP hit
+                break
+            elif entry - l >= sl_threshold:
+                label = 0  # SL hit
+                break
+        labels.append(label)
+
+    labels += [np.nan] * (len(df) - len(labels))
+    df["direction"] = labels
+    df.dropna(subset=["direction"], inplace=True)
+    df["direction"] = df["direction"].astype(int)
+    return df
+
+def create_features_labels(df):
+    df = label_tp_sl(df)
     features = ["rsi", "macd", "sma5", "sma15", "stoch", "roc", "atr", "hour"]
     X = df[features]
     y = df["direction"]
     return X, y
-
-# === Retrain ===
 
 def retrain_model():
     candles = broker.get_candles(
@@ -62,8 +90,6 @@ def retrain_model():
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
     joblib.dump(model, config.MODEL_PATH)
-
-# === Predict Live ===
 
 def predict_from_latest_candles():
     candles = broker.get_candles(
@@ -82,9 +108,7 @@ def predict_from_latest_candles():
 
     return int(prediction), float(max(proba)), X.to_dict("records")[0]
 
-# === Backtest ===
-
-def backtest_model(conf_threshold=0.55, test_size=0.2):
+def backtest_model():
     candles = broker.get_candles(
         instrument=config.TRADING_INSTRUMENT,
         count=config.CANDLE_COUNT,
@@ -93,37 +117,24 @@ def backtest_model(conf_threshold=0.55, test_size=0.2):
     df = preprocess_candles(candles)
     X, y = create_features_labels(df)
 
-    # Train/Test split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=42, shuffle=False
-    )
-
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, shuffle=False)
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X_train, y_train)
-    joblib.dump(model, config.MODEL_PATH)
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)
 
-    # Accuracy metrics
-    train_acc = model.score(X_train, y_train)
-    test_acc = model.score(X_test, y_test)
-
-    proba = model.predict_proba(X_test)
-    preds = model.predict(X_test)
-
-    confident_mask = np.max(proba, axis=1) >= conf_threshold
-    confident_preds = preds[confident_mask]
-    confident_truth = y_test.iloc[confident_mask]
-
-    if len(confident_preds) > 0:
-        confident_acc = np.mean(confident_preds == confident_truth)
-        confidence_coverage = len(confident_preds) / len(y_test)
+    acc = accuracy_score(y_test, y_pred) * 100
+    confident_mask = (y_prob.max(axis=1) >= 0.55)
+    if confident_mask.sum() > 0:
+        confident_acc = accuracy_score(y_test[confident_mask], y_pred[confident_mask]) * 100
     else:
-        confident_acc = 0.0
-        confidence_coverage = 0.0
+        confident_acc = 0
+
+    coverage = confident_mask.sum() / len(y_test) * 100
 
     return {
-        "samples": len(y),
-        "train_accuracy": round(train_acc * 100, 2),
-        "test_accuracy": round(test_acc * 100, 2),
-        "confident_accuracy": round(confident_acc * 100, 2),
-        "confidence_coverage": round(confidence_coverage * 100, 2)
+        "samples": len(X),
+        "accuracy": round(acc, 2),
+        "confident_accuracy": round(confident_acc, 2),
+        "confident_coverage": round(coverage, 2)
     }
