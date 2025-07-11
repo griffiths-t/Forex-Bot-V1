@@ -28,7 +28,15 @@ def status(update: Update, context: CallbackContext):
     confidence = last_prediction.get("confidence")
     retrain_str = last_retrain_time.strftime('%Y-%m-%d %H:%M:%S UTC') if last_retrain_time else "Never"
 
-    dir_str = "🟢 Buy" if direction == 1 else "🔴 Sell" if direction == 0 else "❓ Unknown"
+    if direction == 1:
+        dir_str = "🟢 Buy"
+    elif direction == 0:
+        dir_str = "🔴 Sell"
+    elif direction is None:
+        dir_str = "⚪ Hold"
+    else:
+        dir_str = "❓ Unknown"
+
     conf_str = f"{confidence:.2f}" if confidence is not None else "N/A"
     paused_str = "⏸️ Paused" if TRADING_PAUSED else "▶️ Active"
     market_str = "🟢 Yes" if is_market_open() else "🔴 No"
