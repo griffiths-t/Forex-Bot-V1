@@ -1,8 +1,10 @@
 import os
 import time
+import threading
 from datetime import datetime
 from flask import Flask, request
 from apscheduler.schedulers.background import BackgroundScheduler
+import pytz  # ✅ Required for APScheduler timezones
 
 import config
 import broker
@@ -12,8 +14,10 @@ import trade_logger
 from utils import is_market_open, get_equity
 
 app = Flask(__name__)
-scheduler = BackgroundScheduler()
 SCHEDULER_LOG_FILE = "scheduler_log.txt"
+
+# ✅ Use pytz.utc as required by APScheduler
+scheduler = BackgroundScheduler(timezone=pytz.utc)
 
 # ─────────────────────────────
 # 🌐 Flask Routes
