@@ -163,7 +163,10 @@ schedule.every().day.at("00:00").do(reset_scheduler_log)
 
 def run_schedule():
     while True:
-        schedule.run_pending()
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            print(f"[SCHEDULER ERROR] {e}")
         time.sleep(1)
 
 if __name__ == "__main__":
