@@ -65,7 +65,6 @@ def predict_and_trade():
 
         direction, confidence, indicators = result
 
-        # ✅ Update last prediction and send alert regardless of trade
         telegram_bot.last_prediction.update({
             "direction": direction,
             "confidence": confidence,
@@ -176,6 +175,13 @@ def run_schedule():
 
 if __name__ == "__main__":
     print("✅ Bot is live: 15-min prediction + daily retrain at 23:00 UTC")
+
+    # 🔍 Run one prediction immediately on startup
+    print("[BOOT] Running initial prediction test...")
+    try:
+        predict_and_trade()
+    except Exception as e:
+        print(f"[BOOT ERROR] Initial prediction failed: {e}")
 
     if config.TELEGRAM_USE_WEBHOOK:
         telegram_bot.setup_webhook()
