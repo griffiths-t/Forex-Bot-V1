@@ -10,7 +10,7 @@ last_prediction = {"direction": None, "confidence": None, "indicators": {}}
 last_retrain_time = None
 trade_log = []
 
-# Set up logging
+# Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 bot = Bot(token=config.TELEGRAM_TOKEN)
 
@@ -27,17 +27,24 @@ def status(update: Update, context: CallbackContext):
     indicators = last_prediction.get("indicators", {})
 
     dir_str = "🟢 Buy" if direction == 1 else "🔴 Sell" if direction == 0 else "❓ Unknown"
+    confidence_str = f"{confidence:.2f}" if isinstance(confidence, (float, int)) else "N/A"
     retrain_str = last_retrain_time.strftime('%Y-%m-%d %H:%M:%S UTC') if last_retrain_time else "Never"
 
     msg = (
         f"📊 *Bot Status*\n\n"
         f"*Prediction:* {dir_str}\n"
-        f"*Confidence:* {confidence:.2f}\n"
+        f"*Confidence:* `{confidence_str}`\n"
         f"*Indicators:*\n"
     )
 
-    for k, v in indicators.items():
-        msg += f"`{k}`: `{round(v, 2)}`\n"
+    if indicators:
+        for k, v in indicators.items():
+            if isinstance(v, (float, int)):
+                msg += f"`{k}`: `{v:.2f}`\n"
+            else:
+                msg += f"`{k}`: `{v}`\n"
+    else:
+        msg += "`No indicators yet.`\n"
 
     msg += f"\n*Retrained:* {retrain_str}"
     update.message.reply_text(msg, parse_mode="Markdown")
@@ -66,17 +73,21 @@ def retrain(update: Update, context: CallbackContext):
 def trades(update: Update, context: CallbackContext):
     try:
         with open("trade_log.csv", "r") as f:
-            lines = f.readlines()[-5:]
+            lines = f.readlines()
+
             if not lines:
                 update.message.reply_text("No trades logged yet.")
                 return
 
+            last_lines = lines[-5:]
             msg = "*Recent Trades:*\n"
-            for line in lines:
+            for line in last_lines:
                 msg += f"`{line.strip()}`\n"
             update.message.reply_text(msg, parse_mode="Markdown")
     except FileNotFoundError:
-        update.message.reply_text("Trade log not found.")
+        update.message.reply_text("📭 Trade log not found.")
+    except Exception as e:
+        update.message.reply_text(f"❌ Failed to read trades: {e}")
 
 # === Webhook Setup ===
 
@@ -128,9 +139,10 @@ def send_text(msg):
 
 def send_trade_alert(direction, confidence, signal_type, units):
     emoji = "🟢 Buy" if direction == 1 else "🔴 Sell"
+    confidence_str = f"{confidence:.2f}" if isinstance(confidence, (float, int)) else "N/A"
     msg = (
         f"*Trade Executed*\n"
         f"{emoji} {signal_type.capitalize()} {abs(units)} units\n"
-        f"*Confidence:* `{confidence:.2f}`"
+        f"*Confidence:* `{confidence_str}`"
     )
     send_text(msg)
