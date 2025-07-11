@@ -65,13 +65,14 @@ def predict_and_trade():
 
         direction, confidence, indicators = result
 
-        # ✅ Update last prediction including timestamp
+        # ✅ Update last prediction and send alert regardless of trade
         telegram_bot.last_prediction.update({
             "direction": direction,
             "confidence": confidence,
             "indicators": indicators,
             "timestamp": datetime.utcnow()
         })
+        telegram_bot.send_prediction_alert(direction, confidence)
 
         emoji = "🟢 Buy" if direction == 1 else "🔴 Sell" if direction == 0 else "⚪ Hold"
         print(f"[PREDICT] {emoji}, confidence: {confidence:.2f}")
