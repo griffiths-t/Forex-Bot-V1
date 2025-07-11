@@ -1,3 +1,4 @@
+# telegram_bot.py
 import config
 import logging
 from telegram import Update, Bot
@@ -10,7 +11,12 @@ from model import retrain_model, backtest_model
 
 # === State Tracking ===
 TRADING_PAUSED = False
-last_prediction = {"direction": None, "confidence": None, "indicators": {}}
+last_prediction = {
+    "direction": None,
+    "confidence": None,
+    "indicators": {},
+    "timestamp": None  # added
+}
 last_retrain_time = None
 
 # Logging & Bot Init
@@ -26,8 +32,10 @@ def status(update: Update, context: CallbackContext):
     global last_prediction, last_retrain_time
     direction = last_prediction.get("direction")
     confidence = last_prediction.get("confidence")
+    timestamp = last_prediction.get("timestamp")
     retrain_str = last_retrain_time.strftime('%Y-%m-%d %H:%M:%S UTC') if last_retrain_time else "Never"
 
+    # Direction
     if direction == 1:
         dir_str = "🟢 Buy"
     elif direction == 0:
@@ -37,7 +45,17 @@ def status(update: Update, context: CallbackContext):
     else:
         dir_str = "❓ Unknown"
 
-    conf_str = f"{confidence:.2f}" if confidence is not None else "N/A"
+    # Confidence
+    if confidence is not None:
+        conf_str = f"{confidence:.2f}"
+        conf_status = "✅ trade triggered" if confidence >= 0.6 else "🔻 below threshold"
+    else:
+        conf_str = "N/A"
+        conf_status = "N/A"
+
+    # Prediction time
+    pred_time = timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if timestamp else "Never"
+
     paused_str = "⏸️ Paused" if TRADING_PAUSED else "▶️ Active"
     market_str = "🟢 Yes" if is_market_open() else "🔴 No"
 
@@ -61,8 +79,10 @@ def status(update: Update, context: CallbackContext):
         f"📈 *Open Trades:* {trade_count}\n"
         f"💷 *Total Position:* {total_gbp}\n"
         f"📐 *Next Trade Size:* {units_str}\n"
-        f"🧠 *Last Retrain:* {retrain_str}\n"
-        f"🤖 *Last Prediction:* {dir_str} (conf: {conf_str})"
+        f"🧠 *Last Retrain:* {retrain_str}\n\n"
+        f"🤖 *Last Prediction:* {dir_str}\n"
+        f"📊 *Confidence:* {conf_str} ({conf_status})\n"
+        f"⏱️ *At:* {pred_time}"
     )
     update.message.reply_text(msg, parse_mode="Markdown")
 
