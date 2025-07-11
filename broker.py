@@ -1,104 +1,76 @@
 # broker.py
 import requests
 import config
+from utils import get_equity
 
-def get_headers():
-    return {
-        "Authorization": f"Bearer {config.OANDA_API_KEY}",
-        "Content-Type": "application/json"
-    }
+OANDA_API_URL = "https://api-fxpractice.oanda.com/v3"
+HEADERS = {
+    "Authorization": f"Bearer {config.OANDA_API_KEY}",
+    "Content-Type": "application/json"
+}
 
-def get_candles(instrument=None, count=1500, granularity="M15"):
-    instrument = instrument or config.TRADING_INSTRUMENT
-    url = f"{config.OANDA_URL}/instruments/{instrument}/candles"
+def get_candles(instrument, count, granularity):
+    url = f"{OANDA_API_URL}/instruments/{instrument}/candles"
     params = {
         "count": count,
         "granularity": granularity,
         "price": "M"
     }
-    response = requests.get(url, headers=get_headers(), params=params)
-    if response.status_code != 200:
-        raise Exception(f"Error fetching candles: {response.status_code} - {response.text}")
+    response = requests.get(url, headers=HEADERS, params=params)
+    response.raise_for_status()
     return response.json()["candles"]
 
 def get_open_trades():
-    url = f"{config.OANDA_URL}/accounts/{config.OANDA_ACCOUNT_ID}/openTrades"
-    response = requests.get(url, headers=get_headers())
-    if response.status_code != 200:
-        raise Exception(f"Failed to get open trades: {response.status_code} - {response.text}")
-    return response.json().get("trades", [])
-
-def get_position(instrument):
-    url = f"{config.OANDA_URL}/accounts/{config.OANDA_ACCOUNT_ID}/positions/{instrument}"
-    response = requests.get(url, headers=get_headers())
-    if response.status_code == 404:
-        return None
-    if response.status_code != 200:
-        raise Exception(f"Failed to fetch position: {response.status_code} - {response.text}")
-    return response.json().get("position", {})
-
-def open_trade(instrument, units, stop_loss=None, take_profit=None):
-    url = f"{config.OANDA_URL}/accounts/{config.OANDA_ACCOUNT_ID}/orders"
-    order = {
-        "order": {
-            "instrument": instrument,
-            "units": str(units),
-            "type": "MARKET",
-            "positionFill": "DEFAULT"
-        }
-    }
-    if stop_loss:
-        order["order"]["stopLossOnFill"] = {"price": str(stop_loss)}
-    if take_profit:
-        order["order"]["takeProfitOnFill"] = {"price": str(take_profit)}
-
-    response = requests.post(url, headers=get_headers(), json=order)
-    if response.status_code not in (200, 201):
-        raise Exception(f"Failed to open trade: {response.status_code} - {response.text}")
-    return response.json()
+    url = f"{OANDA_API_URL}/accounts/{config.OANDA_ACCOUNT_ID}/openTrades"
+    response = requests.get(url, headers=HEADERS)
+    response.raise_for_status()
+    return response.json()["trades"]
 
 def close_position(instrument):
-    position = get_position(instrument)
-    if not position:
-        print("[BROKER] No open position to close.")
-        return
-
-    body = {}
-    long_units = float(position.get("long", {}).get("units", "0"))
-    short_units = float(position.get("short", {}).get("units", "0"))
-
-    if long_units != 0:
-        body["longUnits"] = "ALL"
-    if short_units != 0:
-        body["shortUnits"] = "ALL"
-
-    if not body:
-        print("[BROKER] Nothing to close.")
-        return
-
-    url = f"{config.OANDA_URL}/accounts/{config.OANDA_ACCOUNT_ID}/positions/{instrument}/close"
-    response = requests.put(url, headers=get_headers(), json=body)
-    if response.status_code != 200:
-        raise Exception(f"Failed to close position: {response.status_code} - {response.text}")
+    url = f"{OANDA_API_URL}/accounts/{config.OANDA_ACCOUNT_ID}/positions/{instrument}/close"
+    data = {
+        "longUnits": "ALL",
+        "shortUnits": "ALL"
+    }
+    response = requests.put(url, headers=HEADERS, json=data)
+    response.raise_for_status()
     return response.json()
 
-def get_transaction_history(limit=100):
-    url = f"{config.OANDA_URL}/accounts/{config.OANDA_ACCOUNT_ID}/transactions"
-    params = {
-        "type": "ORDER_FILL",
-        "count": limit
-    }
-    response = requests.get(url, headers=get_headers(), params=params)
-    if response.status_code != 200:
-        raise Exception(f"Error fetching transactions: {response.status_code} - {response.text}")
-    return response.json().get("transactions", [])
+def get_current_price(instrument):
+    url = f"{OANDA_API_URL}/accounts/{config.OANDA_ACCOUNT_ID}/pricing"
+    params = {"instruments": instrument}
+    response = requests.get(url, headers=HEADERS, params=params)
+    response.raise_for_status()
+    prices = response.json()["prices"][0]
+    return (float(prices["bids"][0]["price"]) + float(prices["asks"][0]["price"])) / 2
 
-def get_closed_trades():
-    url = f"{config.OANDA_URL}/accounts/{config.OANDA_ACCOUNT_ID}/trades"
-    params = {
-        "state": "CLOSED"
+def calculate_dynamic_units(price, equity, risk_percent=0.15, leverage=20):
+    risk_amount = equity * risk_percent
+    margin_per_unit = price / leverage
+    units = risk_amount / margin_per_unit
+    return int(units)
+
+def place_trade(instrument, direction, tp_pips=15, sl_pips=10):
+    price = get_current_price(instrument)
+    equity = get_equity()
+    units = calculate_dynamic_units(price, equity)
+
+    side = "buy" if direction == 1 else "sell"
+    sl_price = price - sl_pips * 0.0001 if direction == 1 else price + sl_pips * 0.0001
+    tp_price = price + tp_pips * 0.0001 if direction == 1 else price - tp_pips * 0.0001
+
+    order_data = {
+        "order": {
+            "instrument": instrument,
+            "units": str(units if direction == 1 else -units),
+            "type": "MARKET",
+            "positionFill": "DEFAULT",
+            "takeProfitOnFill": {"price": f"{tp_price:.5f}"},
+            "stopLossOnFill": {"price": f"{sl_price:.5f}"}
+        }
     }
-    response = requests.get(url, headers=get_headers(), params=params)
-    if response.status_code != 200:
-        raise Exception(f"Error fetching closed trades: {response.status_code} - {response.text}")
-    return response.json().get("trades", [])
+
+    url = f"{OANDA_API_URL}/accounts/{config.OANDA_ACCOUNT_ID}/orders"
+    response = requests.post(url, headers=HEADERS, json=order_data)
+    response.raise_for_status()
+    return response.json(), units
