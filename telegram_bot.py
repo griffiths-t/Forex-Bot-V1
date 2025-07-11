@@ -1,4 +1,3 @@
-# telegram_bot.py
 import config
 import logging
 from telegram import Update, Bot
@@ -105,9 +104,10 @@ def backtest(update: Update, context: CallbackContext):
         msg = (
             f"🔁 *Backtest Results*\n\n"
             f"📦 *Samples:* {result['samples']}\n"
-            f"✅ *Accuracy:* {result['accuracy']}%\n"
-            f"🎯 *Confident Accuracy:* {result['confident_accuracy']}%\n"
-            f"📊 *Confidence Coverage:* {result['confident_coverage']}%"
+            f"🎯 *Train Accuracy:* {result['train_accuracy']}%\n"
+            f"✅ *Test Accuracy:* {result['test_accuracy']}%\n"
+            f"📈 *Confident Accuracy:* {result['confident_accuracy']}%\n"
+            f"📊 *Confidence Coverage:* {result['confidence_coverage']}%"
         )
         update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
