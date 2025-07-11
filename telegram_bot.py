@@ -37,7 +37,7 @@ def status(update: Update, context: CallbackContext):
 
     open_trades = get_open_trades()
     trade_count = len(open_trades)
-    total_value = sum(abs(float(t["currentUnits"])) for t in open_trades)
+    total_value = sum(abs(float(t.get("currentUnits", 0))) for t in open_trades)
     total_gbp = format_gbp(total_value)
 
     msg = (
@@ -90,15 +90,27 @@ def trades(update: Update, context: CallbackContext):
 def stats(update: Update, context: CallbackContext):
     try:
         summary = get_trade_summary()
+
+        total = summary.get("total_trades", 0)
+        wins = summary.get("wins", 0)
+        losses = summary.get("losses", 0)
+        win_rate = summary.get("win_rate", 0.0)
+        total_pl = summary.get("total_pl", 0.0)
+
+        if total == 0:
+            update.message.reply_text("📊 No closed trades yet.", parse_mode="Markdown")
+            return
+
         msg = (
             f"📈 *Trading Stats*\n\n"
-            f"📊 *Total Trades:* {summary['total']}\n"
-            f"✅ *Wins:* {summary['wins']}\n"
-            f"❌ *Losses:* {summary['losses']}\n"
-            f"🔥 *Win Rate:* {summary['win_rate']}%\n"
-            f"💰 *Net P/L:* {format_gbp(summary['net_pl'])}"
+            f"📊 *Total Trades:* {total}\n"
+            f"✅ *Wins:* {wins}\n"
+            f"❌ *Losses:* {losses}\n"
+            f"🔥 *Win Rate:* {win_rate:.2f}%\n"
+            f"💰 *Net P/L:* {format_gbp(total_pl)}"
         )
         update.message.reply_text(msg, parse_mode="Markdown")
+
     except Exception as e:
         update.message.reply_text(f"❌ Stats error: {e}")
 
