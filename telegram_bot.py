@@ -1,22 +1,20 @@
 # telegram_bot.py
-
 import config
 import logging
 from telegram import Update, Bot
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime
-from utils import is_market_open, get_equity, format_gbp
+from utils import is_market_open, format_gbp, get_equity
 from broker import get_open_trades
 from trade_logger import get_trade_summary
 from model import retrain_model, backtest_model
 
-# === Global State ===
+# === State Tracking ===
 TRADING_PAUSED = False
 last_prediction = {"direction": None, "confidence": None, "indicators": {}}
 last_retrain_time = None
-trade_log = []
 
-# Logging
+# Logging & Bot Init
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 bot = Bot(token=config.TELEGRAM_TOKEN)
 
@@ -27,7 +25,6 @@ def start(update: Update, context: CallbackContext):
 
 def status(update: Update, context: CallbackContext):
     global last_prediction, last_retrain_time
-
     direction = last_prediction.get("direction")
     confidence = last_prediction.get("confidence")
     indicators = last_prediction.get("indicators", {})
@@ -54,6 +51,35 @@ def status(update: Update, context: CallbackContext):
     )
     update.message.reply_text(msg, parse_mode="Markdown")
 
+def stats(update: Update, context: CallbackContext):
+    try:
+        summary = get_trade_summary()
+        msg = (
+            f"📈 *Trading Stats*\n\n"
+            f"📊 *Total Trades:* {summary['total_trades']}\n"
+            f"✅ *Wins:* {summary['wins']}\n"
+            f"❌ *Losses:* {summary['losses']}\n"
+            f"🔥 *Win Rate:* {summary['win_rate']:.1f}%\n"
+            f"💰 *Net P/L:* {format_gbp(summary['total_pl'])}"
+        )
+        update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        update.message.reply_text(f"❌ Stats error: {e}")
+
+def trades(update: Update, context: CallbackContext):
+    try:
+        with open("trade_log.csv", "r") as f:
+            lines = f.readlines()[-5:]
+            if not lines:
+                update.message.reply_text("No trades logged yet.")
+                return
+            msg = "*Recent Trades:*\n"
+            for line in lines:
+                msg += f"`{line.strip()}`\n"
+            update.message.reply_text(msg, parse_mode="Markdown")
+    except FileNotFoundError:
+        update.message.reply_text("Trade log not found.")
+
 def pause(update: Update, context: CallbackContext):
     global TRADING_PAUSED
     TRADING_PAUSED = True
@@ -73,44 +99,39 @@ def retrain(update: Update, context: CallbackContext):
     except Exception as e:
         update.message.reply_text(f"❌ Retrain failed: {e}")
 
-def trades(update: Update, context: CallbackContext):
+def backtest(update: Update, context: CallbackContext):
     try:
-        with open("trade_log.csv", "r") as f:
-            lines = f.readlines()[-5:]
-            if not lines:
-                update.message.reply_text("No trades logged yet.")
-                return
-            msg = "*Recent Trades:*\n"
-            for line in lines:
-                msg += f"`{line.strip()}`\n"
-            update.message.reply_text(msg, parse_mode="Markdown")
-    except FileNotFoundError:
-        update.message.reply_text("Trade log not found.")
-
-def stats(update: Update, context: CallbackContext):
-    try:
-        summary = get_trade_summary()
+        result = backtest_model()
         msg = (
-            f"📈 *Trading Stats*\n\n"
-            f"📊 *Total Trades:* {summary['total_trades']}\n"
-            f"✅ *Wins:* {summary['wins']}\n"
-            f"❌ *Losses:* {summary['losses']}\n"
-            f"🔥 *Win Rate:* {summary['win_rate']:.2f}%\n"
-            f"💰 *Net P/L:* {format_gbp(summary['total_pl'])}"
+            f"🔁 *Backtest Results*\n\n"
+            f"📦 *Samples:* {result['samples']}\n"
+            f"✅ *Accuracy:* {result['accuracy']}%\n"
+            f"🎯 *Confident Accuracy:* {result['confident_accuracy']}%\n"
+            f"📊 *Confidence Coverage:* {result['confident_coverage']}%"
         )
         update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
-        update.message.reply_text(f"❌ Stats error: {e}")
-
-def backtest(update: Update, context: CallbackContext):
-    try:
-        update.message.reply_text("🔍 Running backtest, please wait...")
-        report = backtest_model()
-        update.message.reply_text(f"📊 *Backtest Results:*\n\n{report}", parse_mode="Markdown")
-    except Exception as e:
         update.message.reply_text(f"❌ Backtest failed: {e}")
 
-# === Webhook Setup ===
+# === Polling Setup ===
+
+def start_polling():
+    updater = Updater(token=config.TELEGRAM_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("status", status))
+    dp.add_handler(CommandHandler("stats", stats))
+    dp.add_handler(CommandHandler("trades", trades))
+    dp.add_handler(CommandHandler("pause", pause))
+    dp.add_handler(CommandHandler("resume", resume))
+    dp.add_handler(CommandHandler("retrain", retrain))
+    dp.add_handler(CommandHandler("backtest", backtest))
+
+    updater.start_polling()
+    updater.idle()
+
+# === Webhook Setup (if using web server) ===
 
 def setup_webhook():
     from telegram.ext import Dispatcher
@@ -122,11 +143,11 @@ def setup_webhook():
 
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("status", status))
+    dispatcher.add_handler(CommandHandler("stats", stats))
+    dispatcher.add_handler(CommandHandler("trades", trades))
     dispatcher.add_handler(CommandHandler("pause", pause))
     dispatcher.add_handler(CommandHandler("resume", resume))
     dispatcher.add_handler(CommandHandler("retrain", retrain))
-    dispatcher.add_handler(CommandHandler("trades", trades))
-    dispatcher.add_handler(CommandHandler("stats", stats))
     dispatcher.add_handler(CommandHandler("backtest", backtest))
 
     @app.route(f"/webhook/{config.TELEGRAM_TOKEN}", methods=["POST"])
@@ -136,25 +157,7 @@ def setup_webhook():
 
     app.run(host="0.0.0.0", port=config.PORT)
 
-# === Polling Setup ===
-
-def start_polling():
-    updater = Updater(token=config.TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("status", status))
-    dp.add_handler(CommandHandler("pause", pause))
-    dp.add_handler(CommandHandler("resume", resume))
-    dp.add_handler(CommandHandler("retrain", retrain))
-    dp.add_handler(CommandHandler("trades", trades))
-    dp.add_handler(CommandHandler("stats", stats))
-    dp.add_handler(CommandHandler("backtest", backtest))
-
-    updater.start_polling()
-    updater.idle()
-
-# === Text Sending ===
+# === Util Sending ===
 
 def send_text(msg):
     try:
