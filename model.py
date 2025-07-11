@@ -74,3 +74,28 @@ def predict_from_latest_candles():
     prediction = model.predict(X)[0]
 
     return int(prediction), float(max(proba)), X.to_dict("records")[0]
+
+def run_backtest():
+    candles = broker.get_candles(
+        instrument=config.TRADING_INSTRUMENT,
+        count=config.CANDLE_COUNT,
+        granularity=config.TIMEFRAME
+    )
+    df = preprocess_candles(candles)
+    X, y = create_features_labels(df)
+
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+
+    y_pred = model.predict(X)
+    accuracy = np.mean(y_pred == y)
+    correct = int((y_pred == y).sum())
+    total = len(y)
+    win_rate = accuracy * 100
+
+    return {
+        "total": total,
+        "correct": correct,
+        "accuracy": accuracy,
+        "win_rate": win_rate
+    }
