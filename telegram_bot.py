@@ -15,7 +15,7 @@ last_prediction = {
     "direction": None,
     "confidence": None,
     "indicators": {},
-    "timestamp": None  # added
+    "timestamp": None
 }
 last_retrain_time = None
 
@@ -35,7 +35,6 @@ def status(update: Update, context: CallbackContext):
     timestamp = last_prediction.get("timestamp")
     retrain_str = last_retrain_time.strftime('%Y-%m-%d %H:%M:%S UTC') if last_retrain_time else "Never"
 
-    # Direction
     if direction == 1:
         dir_str = "🟢 Buy"
     elif direction == 0:
@@ -45,7 +44,6 @@ def status(update: Update, context: CallbackContext):
     else:
         dir_str = "❓ Unknown"
 
-    # Confidence
     if confidence is not None:
         conf_str = f"{confidence:.2f}"
         conf_status = "✅ trade triggered" if confidence >= 0.6 else "🔻 below threshold"
@@ -53,9 +51,7 @@ def status(update: Update, context: CallbackContext):
         conf_str = "N/A"
         conf_status = "N/A"
 
-    # Prediction time
     pred_time = timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if timestamp else "Never"
-
     paused_str = "⏸️ Paused" if TRADING_PAUSED else "▶️ Active"
     market_str = "🟢 Yes" if is_market_open() else "🔴 No"
 
@@ -149,6 +145,32 @@ def backtest(update: Update, context: CallbackContext):
     except Exception as e:
         update.message.reply_text(f"❌ Backtest failed: {e}")
 
+# === Util Sending ===
+
+def send_text(msg):
+    try:
+        bot.send_message(chat_id=config.TELEGRAM_CHAT_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"[Telegram] Send failed: {e}")
+
+def send_trade_alert(direction, confidence, signal_type, units):
+    emoji = "🟢 Buy" if direction == 1 else "🔴 Sell"
+    msg = (
+        f"*Trade Executed*\n"
+        f"{emoji} {signal_type.capitalize()} {abs(units)} units\n"
+        f"*Confidence:* `{confidence:.2f}`"
+    )
+    send_text(msg)
+
+def send_prediction_alert(direction, confidence):
+    emoji = "🟢 Buy" if direction == 1 else "🔴 Sell" if direction == 0 else "⚪ Hold"
+    msg = (
+        f"🤖 *Prediction Alert*\n"
+        f"{emoji} Signal\n"
+        f"*Confidence:* `{confidence:.2f}`"
+    )
+    send_text(msg)
+
 # === Polling Setup ===
 
 def start_polling():
@@ -192,20 +214,3 @@ def setup_webhook():
         return "ok"
 
     app.run(host="0.0.0.0", port=config.PORT)
-
-# === Util Sending ===
-
-def send_text(msg):
-    try:
-        bot.send_message(chat_id=config.TELEGRAM_CHAT_ID, text=msg, parse_mode="Markdown")
-    except Exception as e:
-        print(f"[Telegram] Send failed: {e}")
-
-def send_trade_alert(direction, confidence, signal_type, units):
-    emoji = "🟢 Buy" if direction == 1 else "🔴 Sell"
-    msg = (
-        f"*Trade Executed*\n"
-        f"{emoji} {signal_type.capitalize()} {abs(units)} units\n"
-        f"*Confidence:* `{confidence:.2f}`"
-    )
-    send_text(msg)
