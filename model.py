@@ -2,14 +2,16 @@
 import numpy as np
 import pandas as pd
 import joblib
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 from ta.momentum import RSIIndicator, StochasticOscillator, ROCIndicator
 from ta.trend import SMAIndicator, MACD
 from ta.volatility import AverageTrueRange
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
 
 import broker
 import config
+
+# === Data Preprocessing ===
 
 def preprocess_candles(candles):
     df = pd.DataFrame([{
@@ -23,6 +25,7 @@ def preprocess_candles(candles):
 
     df.set_index("time", inplace=True)
 
+    # Indicators
     df["rsi"] = RSIIndicator(close=df["close"]).rsi()
     df["sma5"] = SMAIndicator(close=df["close"], window=5).sma_indicator()
     df["sma15"] = SMAIndicator(close=df["close"], window=15).sma_indicator()
@@ -45,6 +48,8 @@ def create_features_labels(df):
     y = df["direction"]
     return X, y
 
+# === Retrain ===
+
 def retrain_model():
     candles = broker.get_candles(
         instrument=config.TRADING_INSTRUMENT,
@@ -57,6 +62,8 @@ def retrain_model():
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
     joblib.dump(model, config.MODEL_PATH)
+
+# === Predict Live ===
 
 def predict_from_latest_candles():
     candles = broker.get_candles(
@@ -75,7 +82,9 @@ def predict_from_latest_candles():
 
     return int(prediction), float(max(proba)), X.to_dict("records")[0]
 
-def backtest_model():
+# === Backtest ===
+
+def backtest_model(conf_threshold=0.55, test_size=0.2):
     candles = broker.get_candles(
         instrument=config.TRADING_INSTRUMENT,
         count=config.CANDLE_COUNT,
@@ -84,17 +93,37 @@ def backtest_model():
     df = preprocess_candles(candles)
     X, y = create_features_labels(df)
 
-    model = joblib.load(config.MODEL_PATH)
-    preds = model.predict(X)
-    proba = model.predict_proba(X)[:, 1]
+    # Train/Test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=42, shuffle=False
+    )
 
-    accuracy = accuracy_score(y, preds)
-    confident_preds = proba >= 0.55
-    confident_accuracy = accuracy_score(y[confident_preds], preds[confident_preds]) if confident_preds.any() else 0
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    joblib.dump(model, config.MODEL_PATH)
+
+    # Accuracy metrics
+    train_acc = model.score(X_train, y_train)
+    test_acc = model.score(X_test, y_test)
+
+    proba = model.predict_proba(X_test)
+    preds = model.predict(X_test)
+
+    confident_mask = np.max(proba, axis=1) >= conf_threshold
+    confident_preds = preds[confident_mask]
+    confident_truth = y_test.iloc[confident_mask]
+
+    if len(confident_preds) > 0:
+        confident_acc = np.mean(confident_preds == confident_truth)
+        confidence_coverage = len(confident_preds) / len(y_test)
+    else:
+        confident_acc = 0.0
+        confidence_coverage = 0.0
 
     return {
-        "samples": len(X),
-        "accuracy": round(accuracy * 100, 2),
-        "confident_accuracy": round(confident_accuracy * 100, 2),
-        "confident_coverage": round((confident_preds.sum() / len(X)) * 100, 2)
+        "samples": len(y),
+        "train_accuracy": round(train_acc * 100, 2),
+        "test_accuracy": round(test_acc * 100, 2),
+        "confident_accuracy": round(confident_acc * 100, 2),
+        "confidence_coverage": round(confidence_coverage * 100, 2)
     }
