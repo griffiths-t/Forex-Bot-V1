@@ -1,5 +1,7 @@
 from datetime import datetime
 import os
+import requests
+import config
 
 SCHEDULER_LOG_PATH = "scheduler_log.txt"
 
@@ -30,4 +32,22 @@ def log_scheduler_message(message):
 
 def format_gbp(amount):
     """Format a float as British Pound currency (e.g., £1,234.56)"""
-    return f"£{amount:,.2f}"
+    try:
+        return f"£{float(amount):,.2f}"
+    except:
+        return "£0.00"
+
+def get_equity():
+    """Fetch live account equity (NAV) from OANDA API"""
+    url = f"https://api-fxpractice.oanda.com/v3/accounts/{config.OANDA_ACCOUNT_ID}/summary"
+    headers = {
+        "Authorization": f"Bearer {config.OANDA_API_KEY}"
+    }
+    try:
+        r = requests.get(url, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+        return float(data["account"]["NAV"])
+    except Exception as e:
+        print(f"[utils.py] Equity fetch failed: {e}")
+        return 0.0
