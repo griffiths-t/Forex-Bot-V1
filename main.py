@@ -27,35 +27,44 @@ def keep_alive():
     app.run(host='0.0.0.0', port=config.PORT)
 
 def predict_and_trade():
-    if config.TRADING_PAUSED:
-        reason = "⏸️ Bot paused"
-        print(f"[BOT] {reason}")
-        telegram_bot.send_text(f"📭 Trade skipped: {reason}")
-        trade_logger.log_skipped_trade({
-            "timestamp": datetime.utcnow().isoformat(),
-            "direction": None,
-            "confidence": None,
-            "reason_skipped": reason,
-            "indicators": {}
-        })
-        return
+    print(f"[{datetime.utcnow()}] ✅ predict_and_trade() called")
 
-    if not is_market_open():
-        reason = "❌ Market closed"
-        print(f"[BOT] {reason}")
-        telegram_bot.send_text(f"📭 Trade skipped: {reason}")
-        trade_logger.log_skipped_trade({
-            "timestamp": datetime.utcnow().isoformat(),
-            "direction": None,
-            "confidence": None,
-            "reason_skipped": reason,
-            "indicators": {}
-        })
-        return
-
-    print("[BOT] Running prediction and trade logic.")
     try:
-        direction, confidence, indicators = model.predict_from_latest_candles()
+        if config.TRADING_PAUSED:
+            reason = "⏸️ Bot paused"
+            print(f"[BOT] {reason}")
+            telegram_bot.send_text(f"📭 Trade skipped: {reason}")
+            trade_logger.log_skipped_trade({
+                "timestamp": datetime.utcnow().isoformat(),
+                "direction": None,
+                "confidence": None,
+                "reason_skipped": reason,
+                "indicators": {}
+            })
+            return
+
+        if not is_market_open():
+            reason = "❌ Market closed"
+            print(f"[BOT] {reason}")
+            telegram_bot.send_text(f"📭 Trade skipped: {reason}")
+            trade_logger.log_skipped_trade({
+                "timestamp": datetime.utcnow().isoformat(),
+                "direction": None,
+                "confidence": None,
+                "reason_skipped": reason,
+                "indicators": {}
+            })
+            return
+
+        print("[BOT] Running prediction and trade logic.")
+        result = model.predict_from_latest_candles()
+        print(f"[MODEL] Prediction result: {result}")
+
+        if result is None or len(result) != 3:
+            raise ValueError("Model returned invalid prediction result")
+
+        direction, confidence, indicators = result
+
         telegram_bot.last_prediction.update({
             "direction": direction,
             "confidence": confidence,
@@ -105,62 +114,3 @@ def predict_and_trade():
             broker.close_position(config.TRADING_INSTRUMENT)
 
         print(f"[BOT] Placing new trade: {'Buy' if direction == 1 else 'Sell'}")
-        units = config.TRADING_UNITS if direction == 1 else -config.TRADING_UNITS
-        broker.open_trade(config.TRADING_INSTRUMENT, units)
-
-        trade_logger.log_trade({
-            "timestamp": datetime.utcnow().isoformat(),
-            "direction": direction,
-            "confidence": confidence,
-            "indicators": indicators
-        })
-
-        telegram_bot.send_trade_alert(direction, confidence, "buy" if direction == 1 else "sell", config.TRADING_UNITS)
-
-    except Exception as e:
-        print(f"[ERROR] Prediction or trade error: {e}")
-        telegram_bot.send_text(f"❌ Trade error: {e}")
-
-def retrain_daily():
-    try:
-        print("[BOT] Running daily retrain...")
-        model.retrain_model()
-        telegram_bot.last_retrain_time = datetime.utcnow()
-        telegram_bot.send_text("🧠 Retrain finished.")
-    except Exception as e:
-        telegram_bot.send_text(f"❌ Retrain failed: {e}")
-
-def reset_scheduler_log():
-    with open(SCHEDULER_LOG_FILE, "w") as f:
-        f.write("")
-    print("[SCHEDULER] Scheduler log reset.")
-
-def log_scheduler_activity():
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    log_line = f"{timestamp} - [SCHEDULER] Checked tasks\n"
-    with open(SCHEDULER_LOG_FILE, "a") as f:
-        f.write(log_line)
-    print(log_line.strip())
-
-# Schedule jobs
-schedule.every(15).minutes.do(predict_and_trade)
-schedule.every().day.at("23:00").do(retrain_daily)
-schedule.every().minute.do(log_scheduler_activity)
-schedule.every().day.at("00:00").do(reset_scheduler_log)
-
-def run_schedule():
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-if __name__ == "__main__":
-    print("✅ Bot is live: 15-min prediction + daily retrain at 23:00 UTC")
-
-    if config.TELEGRAM_USE_WEBHOOK:
-        telegram_bot.setup_webhook()
-        threading.Thread(target=keep_alive).start()
-        threading.Thread(target=run_schedule).start()
-    else:
-        threading.Thread(target=keep_alive).start()
-        threading.Thread(target=run_schedule).start()
-        telegram_bot.start_polling()
