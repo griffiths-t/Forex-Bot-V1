@@ -78,7 +78,7 @@ def predict_and_trade():
         emoji = "🟢 Buy" if direction == 1 else "🔴 Sell" if direction == 0 else "⚪ Hold"
         print(f"[PREDICT] {emoji}, confidence: {confidence:.2f}")
 
-        if confidence < 0.55:
+        if confidence < 0.6:
             reason = f"⚠️ Low confidence ({confidence:.2f})"
             print(f"[BOT] {reason}")
             telegram_bot.send_text(f"📭 Trade skipped: {reason}")
