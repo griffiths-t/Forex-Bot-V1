@@ -6,6 +6,7 @@ from ta.momentum import RSIIndicator, StochasticOscillator, ROCIndicator
 from ta.trend import SMAIndicator, MACD
 from ta.volatility import AverageTrueRange
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
 
 import broker
 import config
@@ -22,7 +23,6 @@ def preprocess_candles(candles):
 
     df.set_index("time", inplace=True)
 
-    # Technical indicators
     df["rsi"] = RSIIndicator(close=df["close"]).rsi()
     df["sma5"] = SMAIndicator(close=df["close"], window=5).sma_indicator()
     df["sma15"] = SMAIndicator(close=df["close"], window=15).sma_indicator()
@@ -75,7 +75,7 @@ def predict_from_latest_candles():
 
     return int(prediction), float(max(proba)), X.to_dict("records")[0]
 
-def run_backtest():
+def backtest_model():
     candles = broker.get_candles(
         instrument=config.TRADING_INSTRUMENT,
         count=config.CANDLE_COUNT,
@@ -84,18 +84,17 @@ def run_backtest():
     df = preprocess_candles(candles)
     X, y = create_features_labels(df)
 
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X, y)
+    model = joblib.load(config.MODEL_PATH)
+    preds = model.predict(X)
+    proba = model.predict_proba(X)[:, 1]
 
-    y_pred = model.predict(X)
-    accuracy = np.mean(y_pred == y)
-    correct = int((y_pred == y).sum())
-    total = len(y)
-    win_rate = accuracy * 100
+    accuracy = accuracy_score(y, preds)
+    confident_preds = proba >= 0.55
+    confident_accuracy = accuracy_score(y[confident_preds], preds[confident_preds]) if confident_preds.any() else 0
 
     return {
-        "total": total,
-        "correct": correct,
-        "accuracy": accuracy,
-        "win_rate": win_rate
+        "samples": len(X),
+        "accuracy": round(accuracy * 100, 2),
+        "confident_accuracy": round(confident_accuracy * 100, 2),
+        "confident_coverage": round((confident_preds.sum() / len(X)) * 100, 2)
     }
