@@ -52,7 +52,7 @@ def label_tp_sl(df, tp_pips=TP_PIPS, sl_pips=SL_PIPS, pip_value=PIP_VALUE):
 
     for i in range(len(df)):
         entry = closes[i]
-        future_high = highs[i+1:i+6]  # next 5 candles (~1 hour)
+        future_high = highs[i+1:i+6]
         future_low = lows[i+1:i+6]
 
         label = np.nan
@@ -120,13 +120,17 @@ def backtest_model():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, shuffle=False)
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
+
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
     y_prob = model.predict_proba(X_test)
 
-    acc = accuracy_score(y_test, y_pred) * 100
+    train_acc = accuracy_score(y_train, y_train_pred) * 100
+    test_acc = accuracy_score(y_test, y_test_pred) * 100
+
     confident_mask = (y_prob.max(axis=1) >= 0.55)
     if confident_mask.sum() > 0:
-        confident_acc = accuracy_score(y_test[confident_mask], y_pred[confident_mask]) * 100
+        confident_acc = accuracy_score(y_test[confident_mask], y_test_pred[confident_mask]) * 100
     else:
         confident_acc = 0
 
@@ -134,7 +138,8 @@ def backtest_model():
 
     return {
         "samples": len(X),
-        "accuracy": round(acc, 2),
+        "train_accuracy": round(train_acc, 2),
+        "test_accuracy": round(test_acc, 2),
         "confident_accuracy": round(confident_acc, 2),
         "confident_coverage": round(coverage, 2)
     }
