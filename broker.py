@@ -74,3 +74,11 @@ def place_trade(instrument, direction, tp_pips=15, sl_pips=10):
     response = requests.post(url, headers=HEADERS, json=order_data)
     response.raise_for_status()
     return response.json(), units
+
+def open_trade(instrument, units):
+    """
+    Opens a market order trade based on signed units.
+    Positive = Buy, Negative = Sell.
+    """
+    direction = 1 if units > 0 else 0
+    return place_trade(instrument, direction)
