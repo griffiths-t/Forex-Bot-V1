@@ -9,7 +9,7 @@ import broker
 import model
 import telegram_bot
 import trade_logger
-from utils import is_market_open
+from utils import is_market_open, get_equity
 
 app = Flask(__name__)
 SCHEDULER_LOG_FILE = "scheduler_log.txt"
@@ -118,9 +118,13 @@ def predict_and_trade():
             print("[BOT] Existing open trade detected — closing.")
             broker.close_position(config.TRADING_INSTRUMENT)
 
-        print(f"[BOT] Placing new trade: {'Buy' if direction == 1 else 'Sell'}")
-        units = config.TRADING_UNITS if direction == 1 else -config.TRADING_UNITS
-        broker.open_trade(config.TRADING_INSTRUMENT, units)
+        print(f"[BOT] Calculating dynamic trade size and placing new trade...")
+        price = broker.get_current_price(config.TRADING_INSTRUMENT)
+        equity = get_equity()
+        units = broker.calculate_dynamic_units(price, equity)
+        signed_units = units if direction == 1 else -units
+
+        broker.open_trade(config.TRADING_INSTRUMENT, signed_units)
 
         trade_logger.log_trade({
             "timestamp": datetime.utcnow().isoformat(),
@@ -129,7 +133,7 @@ def predict_and_trade():
             "indicators": indicators
         })
 
-        telegram_bot.send_trade_alert(direction, confidence, "buy" if direction == 1 else "sell", config.TRADING_UNITS)
+        telegram_bot.send_trade_alert(direction, confidence, "buy" if direction == 1 else "sell", signed_units)
 
     except Exception as e:
         print(f"[ERROR] Prediction or trade error: {e}")
