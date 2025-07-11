@@ -92,14 +92,12 @@ def predict_and_trade():
             return
 
         current_positions = broker.get_open_trades()
-        same_direction_held = False
-
-        for pos in current_positions:
-            if pos["instrument"] == config.TRADING_INSTRUMENT:
-                units = float(pos.get("currentUnits", "0"))
-                if (units > 0 and direction == 1) or (units < 0 and direction == 0):
-                    same_direction_held = True
-                    break
+        same_direction_held = any(
+            pos["instrument"] == config.TRADING_INSTRUMENT and
+            ((float(pos.get("currentUnits", "0")) > 0 and direction == 1) or
+             (float(pos.get("currentUnits", "0")) < 0 and direction == 0))
+            for pos in current_positions
+        )
 
         if same_direction_held:
             reason = f"Already holding a {emoji} position"
@@ -161,16 +159,21 @@ def log_scheduler_activity():
         f.write(log_line)
     print(log_line.strip())
 
-# Schedule jobs
+def heartbeat():
+    print(f"[HEARTBEAT] Bot alive at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
+
+# ⏰ Schedule jobs
 schedule.every(15).minutes.do(predict_and_trade)
 schedule.every().day.at("23:00").do(retrain_daily)
 schedule.every().minute.do(log_scheduler_activity)
+schedule.every().minute.do(heartbeat)
 schedule.every().day.at("00:00").do(reset_scheduler_log)
 
 def run_schedule():
     while True:
         try:
             schedule.run_pending()
+            print(f"[SCHEDULER] Tick: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
         except Exception as e:
             print(f"[SCHEDULER ERROR] {e}")
         time.sleep(1)
@@ -178,16 +181,13 @@ def run_schedule():
 if __name__ == "__main__":
     print("✅ Bot is live: 15-min prediction + daily retrain at 23:00 UTC")
 
-    # 🔁 Auto-train if model is missing
     if not os.path.exists(config.MODEL_PATH):
         print("[INIT] No model.pkl found — training now...")
         model.retrain_model()
         telegram_bot.last_retrain_time = datetime.utcnow()
 
-    # 🧠 Run one prediction immediately on startup
     predict_and_trade()
 
-    # 🧵 Start server + scheduler threads
     if config.TELEGRAM_USE_WEBHOOK:
         telegram_bot.setup_webhook()
         threading.Thread(target=keep_alive, daemon=True).start()
