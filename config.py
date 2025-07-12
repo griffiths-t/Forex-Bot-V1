@@ -25,7 +25,7 @@ TRADING_PAUSED = False  # Can be toggled via Telegram /pause
 
 # === Model & Training Settings ===
 MODEL_PATH = "model.pkl"
-CANDLE_COUNT = 1500
+CANDLE_COUNT = 3999
 TIMEFRAME = "M15"
 
 # === Compatibility Aliases ===
