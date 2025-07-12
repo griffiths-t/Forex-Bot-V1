@@ -11,7 +11,7 @@ import broker
 import model
 import telegram_bot
 import trade_logger
-from utils import is_market_open, get_equity
+from utils import is_market_open, is_safe_trading_time, get_equity
 
 app = Flask(__name__)
 SCHEDULER_LOG_FILE = "scheduler_log.txt"
@@ -64,6 +64,18 @@ def predict_and_trade():
 
     if not is_market_open():
         reason = "❌ Market closed"
+        telegram_bot.send_text(f"📭 Trade skipped: {reason}")
+        trade_logger.log_skipped_trade({
+            "timestamp": datetime.utcnow().isoformat(),
+            "direction": None,
+            "confidence": None,
+            "reason_skipped": reason,
+            "indicators": {}
+        })
+        return
+
+    if not is_safe_trading_time():
+        reason = "🚫 Avoiding volatile trading hour"
         telegram_bot.send_text(f"📭 Trade skipped: {reason}")
         trade_logger.log_skipped_trade({
             "timestamp": datetime.utcnow().isoformat(),
