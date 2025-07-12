@@ -18,6 +18,31 @@ def is_market_open():
         return False
     return True
 
+def is_safe_trading_time():
+    """Avoid high-volatility times like session open/close and overnight illiquidity."""
+    now = datetime.utcnow()
+    hour = now.hour
+    minute = now.minute
+    time_float = hour + (minute / 60)
+
+    # ⛔ Avoid 07:00–07:30 (London open)
+    if 7 <= time_float < 7.5:
+        return False
+
+    # ⛔ Avoid 12:00–12:30 (NY open)
+    if 12 <= time_float < 12.5:
+        return False
+
+    # ⛔ Avoid 20:30–21:00 (NY close fade)
+    if 20.5 <= time_float < 21:
+        return False
+
+    # ⛔ Avoid 21:00–06:00 (overnight slippage)
+    if time_float >= 21 or time_float < 6:
+        return False
+
+    return True
+
 def log_scheduler_message(message):
     now = datetime.utcnow()
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
